@@ -1,0 +1,32 @@
+# Secrets -- never commit these
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Output / generated lead data (scraped phone numbers -- keep private, never commit)
+leads.csv
+*.out.csv
+warm_leads.csv
+warm_leads.html
+sg_leads.csv
+smoke.csv
+*.log
+# keep sample_businesses.csv (a fixture) but ignore other hand-made input lists
+sg_interior_design.csv
+
+# Local Koda / MCP coordination config (not part of the product)
+.mcp.json
+
+# Local editor / multi-agent coordination cruft (not part of the product)
+.koda/
+.claude/
+claims/
+lanes/
+messages/
+newcards/
