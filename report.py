@@ -22,9 +22,9 @@ import scoring
 
 CSV_FIELDS = [
     "tier", "score", "name", "phone", "email", "review_count", "rating",
-    "instagram_followers", "ad_tags", "capture_methods", "hook",
+    "instagram_followers", "email_grade", "ad_tags", "capture_methods", "hook",
     "website", "instagram", "facebook", "tiktok", "address", "opening_hours",
-    "reasons", "status",
+    "reasons", "status", "whatsapp_message", "email_subject", "email_body",
 ]
 
 # Column heading, source key, and whether the value is a link.
@@ -38,6 +38,7 @@ SHEET_COLUMNS = [
     ("Reviews", "review_count", False),
     ("IG followers", "instagram_followers", False),
     ("Email", "email", False),
+    ("Email quality", "email_grade", False),
     ("Opening hours", "opening_hours", False),
     ("Website", "website", True),
     ("Instagram", "instagram", True),
@@ -201,8 +202,12 @@ def write_html(rows, path, stamp=""):
         if row.get("instagram_followers"):
             meta.append(f"{row['instagram_followers']:,} IG followers")
         if row.get("email"):
+            label = html_module.escape(row["email"])
+            note = (row.get("email_grade") or "").strip()
+            if note and note != "personal":
+                label += f" ({html_module.escape(note)})"
             meta.append(f'<a href="mailto:{html_module.escape(row["email"])}">'
-                        f'{html_module.escape(row["email"])}</a>')
+                        f'{label}</a>')
         for label, key in (("website", "website"), ("Instagram", "instagram"),
                            ("Facebook", "facebook"), ("TikTok", "tiktok")):
             link = (row.get(key) or "").strip()
@@ -215,6 +220,11 @@ def write_html(rows, path, stamp=""):
         if row.get("status") and row["status"] != "ok":
             meta.append(html_module.escape(str(row["status"])))
 
+        chat = (row.get("whatsapp_link") or "").strip()
+        if chat:
+            meta.append(f'<a href="{html_module.escape(chat)}" target="_blank" '
+                        f'rel="noopener noreferrer">open WhatsApp with the '
+                        f'message ready</a>')
         adtags = (row.get("ad_tags") or "").strip()
         adnote = (f' <span class="score">{html_module.escape(adtags)}</span>'
                   if adtags else "")

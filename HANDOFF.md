@@ -1,6 +1,6 @@
 # HANDOFF — LeadScan
 
-Last updated: 2026-08-17 (v3.2)
+Last updated: 2026-08-17 (v4)
 
 ## The idea in one line
 
@@ -201,6 +201,91 @@ an unread page would break the honesty rule the whole model rests on.
 Places API (New) returns `regularOpeningHours` inside the same field mask, at no
 extra request, so the call sheet now carries them. A caller who dials a closed
 shop wastes the lead as surely as a wrong number.
+
+---
+
+## v4 — what the competitors sell, and what was missing
+
+A scan of the tools an agency in this market actually pays for
+(Insites $299/mo, Woorank $80-200/mo, SEOptimer from €29/mo, SE Ranking from
+$44/mo, BrightLocal, marketgoo, BuzzBoard) and of the Google Maps lead tools
+(Outscraper, Scrap.io, Apify, PhantomBuster, Get Map Leads) produced three
+findings.
+
+### Finding 1 — the ad-tag test is a real differentiator, and it was undersold
+
+In the Google Maps lead-tool category, **ad pixel detection is offered by
+nobody**, and website technology detection by nobody either. Those tools
+compete on volume of rows and on email enrichment. LeadScan's whole premise —
+"this firm is provably paying for traffic AND cannot capture it" — is not
+something any of them can answer. That is the thing to lead with, and it is now
+stated plainly in the README rather than buried in the scoring table.
+
+### Finding 2 — every audit tool sells a report; LeadScan had none (FIXED)
+
+Insites, Woorank, SEOptimer, SE Ranking, BrightLocal and marketgoo all lead
+with a white-label report the agency puts in front of the business owner. Get
+Map Leads sells "branded PDF reports" as a headline. LeadScan produced a call
+sheet for the caller and nothing at all for the prospect, so the call was still
+a cold call.
+
+`audit_report.py` now writes a one-page, self-contained, printable review per
+lead (`--reports`), branded from `.env`, plus a single-site `--audit URL` mode
+for an inbound enquiry. This is also step one of the partnership ladder in this
+document: "give first". A named report about their own website is a much better
+opening than a phone call about nothing.
+
+**Every report carries a "what this review did not check" section**, listing the
+things a real audit would cover and this one did not. That is the opposite of
+what the generic audit tools do, and it is deliberate: the owner forwards the
+report to whoever built the site, and a report that overclaims is destroyed in
+one reply. A report that states its own limits survives and gets the meeting.
+
+A firm with no website, or one whose site did not load, gets no report.
+
+### Finding 3 — email enrichment is a headline feature elsewhere (FIXED)
+
+Outscraper and Scrap.io both sell "built-in email enrichment". LeadScan already
+pulled addresses off the site and the contact page, but a scraped address is not
+a usable one. `verify.py` grades each address: `personal` (a named person at the
+company domain), `shared` (`info@`, `enquiries@` — kept, but flagged), `freemail`,
+or unusable (a template placeholder, a disposable domain, a typing mistake such
+as `gmial.com`, bad syntax, or a domain that accepts no mail).
+
+It deliberately does NOT open an SMTP connection to test a mailbox. That check
+is what paid verification services sell; it is slow, often blocked, and doing it
+at volume from your own address gets you listed as a spam probe. If you need
+mailbox-level certainty, pay a service for the final list.
+
+### Also new in v4
+
+* **The first message is written for you.** Every lead carries a WhatsApp
+  opener, an email subject and an email body, built from what the scan found.
+  The call sheet has a link that opens WhatsApp with the message already typed.
+  Writing the same message forty times by hand is the step that actually stops
+  people from working a list. The drafts obey the same honesty rule: they name
+  only what was seen, never promise a result, and offer the review free.
+* **`--crm`** writes a CSV with the column names Instantly, Lemlist, Smartlead
+  and HubSpot expect, so it imports without renaming anything. Leads with no
+  usable address are left out, because an un-mailable contact inflates the
+  bounce rate every later send depends on.
+* The findings now ride on the output row, so a report can be rebuilt from a
+  saved run without opening a single website again.
+
+### What the competitors have that LeadScan still does not
+
+* **An embeddable audit widget.** Insites, Woorank, SEOptimer and SE Ranking all
+  sell one: a form on the agency's own site where a visitor types their URL and
+  gets a report, which captures the visitor as a lead. `--audit URL` is the
+  local half of this. The missing half is hosting, and that is a real product
+  decision, not an afternoon's work.
+* **Rank tracking and citation management** (BrightLocal, SE Ranking). Out of
+  scope, and `Localrank-MVP` in this same portfolio already covers the rank-grid
+  idea.
+* **A contact person's name.** Every outreach tool merges `{{first_name}}`.
+  LeadScan has only the business name, and guessing a person from an email
+  address was considered and dropped: "Hi Info," and a wrong name are both worse
+  than no name.
 
 ---
 

@@ -16,6 +16,7 @@ This file only joins them together and builds the output row.
 import detect
 import scoring
 import config
+import verify
 
 
 def audit_business(browser, business, cache=None, deep=True):
@@ -159,7 +160,13 @@ def _cached_followers(browser, profile_url, cache):
 
 def _row(business, findings, verdict, follower_count, status, final_url):
     findings = findings or {}
+    # Grade the address before it reaches the caller. A shared inbox is still
+    # useful; a template placeholder is not.
+    best_email = verify.best(findings.get("emails"))
     return {
+        # The full findings ride along so a prospect report can be built later
+        # without opening the website again. report.py ignores this key.
+        "_findings": findings,
         "score": verdict["score"],
         "tier": verdict["tier"],
         "warm": verdict["warm"],
@@ -174,7 +181,8 @@ def _row(business, findings, verdict, follower_count, status, final_url):
         "instagram": findings.get("instagram", ""),
         "facebook": findings.get("facebook", ""),
         "tiktok": findings.get("tiktok", ""),
-        "email": (findings.get("emails") or [""])[0],
+        "email": best_email.get("address", "") if best_email else "",
+        "email_grade": best_email.get("grade", "") if best_email else "",
         "ad_tags": ", ".join(findings.get("ad_tags", [])),
         "capture_methods": ", ".join(findings.get("capture_methods", [])),
         "load_seconds": findings.get("load_seconds"),

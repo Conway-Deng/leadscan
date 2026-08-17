@@ -30,9 +30,11 @@ from dotenv import load_dotenv
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+import audit_report
 import cache as cache_module
 import checks
 import config
+import outreach
 import report
 import runner
 import scoring
@@ -88,6 +90,51 @@ def _apply_exclusions(businesses, path):
     return kept, len(businesses) - len(kept)
 
 
+def _audit_one(args, log):
+    """
+    Review one website and write the prospect report for it.
+
+    This is the on-demand version of the sweep: somebody enquires, or you have
+    one firm in mind, and you want the review in front of them today. It is
+    also how you check what the report looks like before you send any.
+    """
+    from browser import Browser
+
+    url = args.audit.strip()
+    business = {"name": args.audit, "website": url, "phone": "",
+                "review_count": None, "place_id": ""}
+    store = cache_module.Cache(enabled=not args.no_cache)
+
+    log(f"Reviewing {url} ...")
+    with Browser(log=log, respect_robots=not args.ignore_robots) as browser:
+        row = checks.audit_business(browser, business, cache=store,
+                                    deep=not args.shallow)
+
+    if row["status"] != "ok":
+        log(f"Could not review the site: {row['status']}")
+        return 1
+
+    findings = row.get("_findings") or {}
+    # Name the report after the domain, because a URL is not a business name.
+    stem = audit_report.safe_filename(sources.root_domain(url) or "site")
+    folder = args.reports or "reports"
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, stem + ".html")
+    stamp = datetime.date.today().isoformat()
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(audit_report.build(row, findings, stamp=stamp))
+
+    log("")
+    log(f"Report written to {path}")
+    log(f"Score {row['score']}  tier {row.get('tier') or 'none'}")
+    log(f'Opening line: "{row["hook"]}"')
+    if not audit_report.brand()["name"]:
+        log("")
+        log("Tip: set LEADSCAN_BRAND_NAME and LEADSCAN_BRAND_CONTACT in .env "
+            "to put your own name on the report.")
+    return 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         description="Find quiet businesses that invest in being seen but cannot "
@@ -96,6 +143,9 @@ def build_parser():
     source.add_argument("--input", help="CSV of businesses (columns: name, website)")
     source.add_argument("--sweep", choices=sorted(config.SWEEPS),
                         help="Named search sweep")
+    source.add_argument("--audit", metavar="URL",
+                        help="Review ONE website and write the prospect report. "
+                             "Use this for an inbound enquiry or a named target")
     parser.add_argument("--list-sweeps", action="store_true",
                         help="Show every sweep and its search terms, then stop")
     parser.add_argument("--want", type=int, default=40,
@@ -123,6 +173,14 @@ def build_parser():
     parser.add_argument("--journal", metavar="PATH",
                         help="Append every finished firm to this JSON Lines file. "
                              "Re-running the command skips whatever is in it")
+    parser.add_argument("--reports", metavar="DIR", nargs="?", const="reports",
+                        help="Write one prospect-facing website review per lead "
+                             "into DIR (default: reports/). This is the thing "
+                             "you send the business owner")
+    parser.add_argument("--crm", metavar="PATH", nargs="?", const="crm_import.csv",
+                        help="Also write a CSV shaped for Instantly, Lemlist, "
+                             "Smartlead or HubSpot. Only leads with a usable "
+                             "email address are included")
     parser.add_argument("--ignore-robots", action="store_true",
                         help="Read sites even when robots.txt says not to. "
                              "The default is to obey it")
@@ -145,9 +203,12 @@ def main(argv=None):
                 log(f"    {query}")
         return 0
 
+    if args.audit:
+        return _audit_one(args, log)
+
     if not args.input and not args.sweep:
-        log("Choose a source: --input FILE.csv or --sweep NAME "
-            "(--list-sweeps shows the names).")
+        log("Choose a source: --input FILE.csv, --sweep NAME, or --audit URL "
+            "(--list-sweeps shows the sweep names).")
         return 2
 
     if args.clear_cache:
@@ -218,6 +279,9 @@ def main(argv=None):
 
     # --- Write the call sheet ---
     leads = report.select_leads(results, args.want, include_cool=args.include_cool)
+    # Write the first message for every lead, so nobody has to write forty.
+    marque = audit_report.brand()
+    outreach.add_drafts(leads, marque["name"], marque["contact"])
     stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     written = report.write_all(leads, args.out, stamp=stamp)
 
@@ -236,6 +300,14 @@ def main(argv=None):
     log(f"  {store.summary()}")
     for kind, path in written.items():
         log(f"  {kind:<5} {path}")
+
+    if args.reports:
+        audit_report.write_reports(leads, args.reports, stamp=stamp, log=log)
+
+    if args.crm:
+        path, kept = outreach.write_crm_csv(leads, args.crm)
+        log(f"  crm   {path}  ({kept} of {len(leads)} leads have a usable "
+            f"email address)")
 
     if leads:
         top = leads[0]

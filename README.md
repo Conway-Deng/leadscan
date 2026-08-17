@@ -107,10 +107,75 @@ traffic but you cannot capture it" is a useful thing to know on the call.
 | `--shallow` | Read the home page only. See "The contact page" below. |
 | `--exclude PATH` | A CSV of firms already contacted. They are dropped before any site is rendered. |
 | `--journal PATH` | Append every finished firm to a JSON Lines file. See "If a run stops". |
+| `--audit URL` | Review ONE website and write the prospect report. For an inbound enquiry or a named target. |
+| `--reports [DIR]` | Write one prospect-facing website review per lead (default `reports/`). |
+| `--crm [PATH]` | Also write a CSV shaped for Instantly, Lemlist, Smartlead or HubSpot. |
 | `--ignore-robots` | Read sites even when `robots.txt` says not to. The default is to obey it. |
 | `--no-cache` | Fetch everything again. |
 | `--clear-cache` | Delete the cache folder first. |
 | `--log PATH` | Append the run log to a file. |
+
+## The report you send the prospect
+
+This is the thing that turns a cold call into a warm one, and it is what every
+paid tool in this market charges $29 to $299 a month for.
+
+```bash
+python leadscan.py --sweep sg-interior --reports          # one per lead
+python leadscan.py --audit https://somefirm.com.sg        # one, on demand
+```
+
+Each report is a single self-contained HTML file. Open it in a browser and
+print to PDF, or send the file. It says what is wrong, what it costs the owner
+in plain language, and what to do about each item — plus what is already
+working, because a report that is all bad news reads as a sales pitch.
+
+Put your own name on it with these in `.env`:
+
+```
+LEADSCAN_BRAND_NAME=Nixon Media
+LEADSCAN_BRAND_TAGLINE=Interior design marketing, Singapore
+LEADSCAN_BRAND_CONTACT=nixon@example.sg · +65 9123 4567
+LEADSCAN_BRAND_COLOUR=#0f766e
+LEADSCAN_BRAND_CTA=Happy to walk through any of this on a short call.
+```
+
+**Every report carries a "what this review did not check" section.** That is
+deliberate, and it is the opposite of what the generic audit tools do. The
+owner will forward the report to whoever built their site. A report that
+overclaims gets pulled apart in one reply and costs the meeting; a report that
+states its own limits survives.
+
+A firm with no website, or one whose site did not load, gets no report. There
+is nothing to review, and "you have no website" is a worse opening than a call.
+
+## The first message
+
+Every lead in the CSV comes with a WhatsApp opener, an email subject and an
+email body, already written from what the scan found. The call sheet carries a
+link that opens WhatsApp with the message typed.
+
+The drafts follow the same rule as everything else: they name only what was
+seen, they never promise a result, and they offer the review free. Writing the
+same message forty times by hand is the step that actually stops people from
+working a list.
+
+## Sending the list to an outreach tool
+
+```bash
+python leadscan.py --sweep sg-car --crm
+```
+
+`crm_import.csv` uses the column names Instantly, Lemlist, Smartlead and HubSpot
+expect, so it imports without renaming anything. Leads with no usable email
+address are left out: an un-mailable contact inflates the bounce rate that every
+later send depends on.
+
+Addresses are graded before they get there — `personal`, `shared` (an `info@`
+inbox), `freemail`, or dropped as a template placeholder, a disposable domain or
+a typing mistake. No mail server is ever contacted to test a mailbox; that check
+is what paid verification services sell, and doing it at volume from your own
+address gets you listed as a spam probe.
 
 ## The contact page
 
@@ -164,7 +229,7 @@ python -m pip install -r requirements-dev.txt
 python -m pytest tests/ -q
 ```
 
-113 tests. None of them needs a browser, a key or a network connection.
+151 tests. None of them needs a browser, a key or a network connection.
 They run in under a second and gate every push through GitHub Actions.
 
 To try the whole pipeline end to end with no key and no internet:
@@ -195,6 +260,9 @@ reported as broken), and a parked domain.
 | `runner.py` | Parallel workers and the crash-safe journal. |
 | `cache.py` | The resumable disk cache. |
 | `robots.py` | Reads `robots.txt` and obeys it. |
+| `audit_report.py` | The branded one-page review you send the prospect. |
+| `outreach.py` | The first message, and the CRM-shaped export. |
+| `verify.py` | Grades an email address before you use it. |
 | `adlibrary.py` | Optional Meta Ad Library check. **Read the note at the top.** |
 | `make_readable.py` | Rebuild the call sheet from an edited CSV. |
 
