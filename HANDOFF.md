@@ -1,6 +1,6 @@
 # HANDOFF — LeadScan
 
-Last updated: 2026-08-17 (v3.1)
+Last updated: 2026-08-17 (v3.2)
 
 ## The idea in one line
 
@@ -183,6 +183,25 @@ returns a different branch name or a differently formatted phone number.
 every push, and fails the build if a Google API key pattern or a tracked `.env`
 ever reaches the repository.
 
+### 13. robots.txt is now read and obeyed
+
+LeadScan opens hundreds of sites in a loop. That is a crawler, whatever the user
+agent says. Most small-business sites either have no `robots.txt` or allow
+everything, so in practice this changes almost nothing — but the cases where it
+does change something are the cases where it matters.
+
+A blocked firm is NOT dropped. It stays in the output with the status
+`blocked by robots.txt` so the caller can open the site by hand. It is simply
+never scored on evidence that was not collected, because guessing a verdict from
+an unread page would break the honesty rule the whole model rests on.
+`--ignore-robots` switches the check off.
+
+### 14. Opening hours on the call sheet
+
+Places API (New) returns `regularOpeningHours` inside the same field mask, at no
+extra request, so the call sheet now carries them. A caller who dials a closed
+shop wastes the lead as surely as a wrong number.
+
 ---
 
 ## Read this before you build the Meta Ad Library gate
@@ -242,11 +261,9 @@ lead, and you can say exactly what you saw.
       weight in `config.py` (aesthetics is worth more per client than aircon)
       would sharpen the order of a combined call list. Small change, real
       effect once more than one niche has been swept.
-- [ ] **Call when they are open.** Places API (New) can return
-      `regularOpeningHours` in the same field mask at no extra request. Flagging
-      "open now" on the call sheet would stop wasted dials. About an hour of
-      work: add the field to `FIELD_MASK`, carry it through `place_from_new`,
-      and show a badge in `report.write_html`.
+- [x] ~~Call when they are open~~ — the hours are on the sheet as of v3.2. What
+      is still missing is an "open right now" badge, which needs the local time
+      and a parse of the weekday text. Half an hour of work.
 - [ ] **A cost estimate before a sweep.** `--dry-run` printing "this sweep will
       make about 30 Places requests" would make the API bill predictable.
 

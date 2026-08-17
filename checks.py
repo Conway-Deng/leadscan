@@ -169,6 +169,7 @@ def _row(business, findings, verdict, follower_count, status, final_url):
         "address": business.get("address", ""),
         "review_count": business.get("review_count"),
         "rating": business.get("rating"),
+        "opening_hours": " | ".join(business.get("opening_hours") or []),
         "instagram_followers": follower_count,
         "instagram": findings.get("instagram", ""),
         "facebook": findings.get("facebook", ""),

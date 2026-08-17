@@ -107,6 +107,7 @@ traffic but you cannot capture it" is a useful thing to know on the call.
 | `--shallow` | Read the home page only. See "The contact page" below. |
 | `--exclude PATH` | A CSV of firms already contacted. They are dropped before any site is rendered. |
 | `--journal PATH` | Append every finished firm to a JSON Lines file. See "If a run stops". |
+| `--ignore-robots` | Read sites even when `robots.txt` says not to. The default is to obey it. |
 | `--no-cache` | Fetch everything again. |
 | `--clear-cache` | Delete the cache folder first. |
 | `--log PATH` | Append the run log to a file. |
@@ -163,7 +164,7 @@ python -m pip install -r requirements-dev.txt
 python -m pytest tests/ -q
 ```
 
-107 tests. None of them needs a browser, a key or a network connection.
+113 tests. None of them needs a browser, a key or a network connection.
 They run in under a second and gate every push through GitHub Actions.
 
 To try the whole pipeline end to end with no key and no internet:
@@ -193,6 +194,7 @@ reported as broken), and a parked domain.
 | `report.py` | Writes the CSV, HTML and XLSX call sheets. |
 | `runner.py` | Parallel workers and the crash-safe journal. |
 | `cache.py` | The resumable disk cache. |
+| `robots.py` | Reads `robots.txt` and obeys it. |
 | `adlibrary.py` | Optional Meta Ad Library check. **Read the note at the top.** |
 | `make_readable.py` | Rebuild the call sheet from an edited CSV. |
 
@@ -202,6 +204,10 @@ reported as broken), and a parked domain.
 * The output files and the cache hold business phone numbers taken from public
   listings. They are git-ignored. Keep them private and delete them when the
   campaign ends.
+* `robots.txt` is read and obeyed. A site that says no keeps the status
+  `blocked by robots.txt` in the output, so the caller can open it by hand, and
+  it is never scored on evidence that was not collected. `--ignore-robots`
+  switches this off; think before you use it.
 * At most two pages are read per firm, with a one-second gap between two hits on
   the same server. Raise `LEADSCAN_POLITE_DELAY` before you run at high volume.
 * `--exclude` stops you calling the same firm twice across sweeps. Point it at

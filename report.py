@@ -23,7 +23,8 @@ import scoring
 CSV_FIELDS = [
     "tier", "score", "name", "phone", "email", "review_count", "rating",
     "instagram_followers", "ad_tags", "capture_methods", "hook",
-    "website", "instagram", "facebook", "tiktok", "address", "reasons", "status",
+    "website", "instagram", "facebook", "tiktok", "address", "opening_hours",
+    "reasons", "status",
 ]
 
 # Column heading, source key, and whether the value is a link.
@@ -37,6 +38,7 @@ SHEET_COLUMNS = [
     ("Reviews", "review_count", False),
     ("IG followers", "instagram_followers", False),
     ("Email", "email", False),
+    ("Opening hours", "opening_hours", False),
     ("Website", "website", True),
     ("Instagram", "instagram", True),
     ("Facebook", "facebook", True),
@@ -207,6 +209,9 @@ def write_html(rows, path, stamp=""):
             if link:
                 meta.append(f'<a href="{html_module.escape(link)}" target="_blank" '
                             f'rel="noopener noreferrer">{label}</a>')
+        hours = (row.get("opening_hours") or "").strip()
+        if hours:
+            meta.append(f'<span title="{html_module.escape(hours)}">opening hours &#9432;</span>')
         if row.get("status") and row["status"] != "ok":
             meta.append(html_module.escape(str(row["status"])))
 
@@ -269,7 +274,8 @@ def write_xlsx(rows, path):
         "cool": PatternFill("solid", fgColor="EAF2DC"),
     }
     widths = {"Business": 30, "What to say": 78, "Phone": 18, "Website": 34,
-              "Email": 28, "Ad tags found": 20, "Instagram": 30, "Facebook": 30,
+              "Email": 28, "Ad tags found": 20, "Opening hours": 40,
+              "Instagram": 30, "Facebook": 30,
               "TikTok": 30, "Status": 16}
 
     book = Workbook()

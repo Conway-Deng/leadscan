@@ -23,6 +23,7 @@ from playwright.sync_api import sync_playwright
 
 import config
 import detect
+import robots
 
 # Instagram and TikTok put the follower count in the og:description meta tag.
 _OG_DESCRIPTION = re.compile(
@@ -68,11 +69,14 @@ def followers_from_html(html):
 class Browser:
     """One browser for the whole run. Faster and more stable than one per site."""
 
-    def __init__(self, polite_delay=None, log=None):
+    def __init__(self, polite_delay=None, log=None, respect_robots=None):
         self.polite_delay = (
             config.POLITE_DELAY_SECONDS if polite_delay is None else polite_delay
         )
         self.log = log or (lambda message: None)
+        self.respect_robots = (
+            config.RESPECT_ROBOTS if respect_robots is None else respect_robots
+        )
         self._last_hit_by_host = {}
 
     def __enter__(self):
@@ -134,6 +138,9 @@ class Browser:
         url = url.strip()
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
+
+        if self.respect_robots and not robots.may_fetch(url):
+            return None, url, None, "blocked by robots.txt"
 
         timeouts = [config.NAV_TIMEOUT_MS] + [config.RETRY_TIMEOUT_MS] * config.RENDER_RETRIES
         last_error = "unreachable"

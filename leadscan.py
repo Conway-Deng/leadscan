@@ -63,11 +63,12 @@ class Logger:
 
 
 def audit_all(businesses, social_only=False, cache=None, log=print,
-              workers=1, deep=True, journal_path=None):
+              workers=1, deep=True, journal_path=None, respect_robots=True):
     """Render and score every business. Give back all the result rows."""
     return runner.run_audits(businesses, social_only=social_only, cache=cache,
                              log=log, workers=workers, deep=deep,
-                             journal_path=journal_path)
+                             journal_path=journal_path,
+                             respect_robots=respect_robots)
 
 
 def _apply_exclusions(businesses, path):
@@ -122,6 +123,9 @@ def build_parser():
     parser.add_argument("--journal", metavar="PATH",
                         help="Append every finished firm to this JSON Lines file. "
                              "Re-running the command skips whatever is in it")
+    parser.add_argument("--ignore-robots", action="store_true",
+                        help="Read sites even when robots.txt says not to. "
+                             "The default is to obey it")
     parser.add_argument("--no-cache", action="store_true",
                         help="Ignore the cache and fetch everything again")
     parser.add_argument("--clear-cache", action="store_true",
@@ -209,7 +213,8 @@ def main(argv=None):
 
     results = audit_all(businesses, social_only=args.social_only, cache=store,
                         log=log, workers=args.workers, deep=not args.shallow,
-                        journal_path=journal_path)
+                        journal_path=journal_path,
+                        respect_robots=not args.ignore_robots)
 
     # --- Write the call sheet ---
     leads = report.select_leads(results, args.want, include_cool=args.include_cool)

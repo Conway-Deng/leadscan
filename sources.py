@@ -55,6 +55,7 @@ FIELD_MASK = ",".join([
     "places.userRatingCount",
     "places.rating",
     "places.businessStatus",
+    "places.regularOpeningHours",
     "nextPageToken",
 ])
 
@@ -267,6 +268,10 @@ def place_from_new(place):
         "rating": place.get("rating"),
         "place_id": place.get("id") or "",
         "business_status": place.get("businessStatus") or "",
+        # The weekday text is what a person reads, so it is what the call sheet
+        # shows. It costs no extra request: it rides in the same field mask.
+        "opening_hours": ((place.get("regularOpeningHours") or {})
+                          .get("weekdayDescriptions") or []),
     }
 
 

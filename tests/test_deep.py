@@ -247,3 +247,73 @@ def test_an_empty_exclusion_file_drops_nothing(tmp_path):
     kept, dropped = leadscan._apply_exclusions(businesses, str(path))
     assert dropped == 0
     assert len(kept) == 1
+
+
+# ---------------------------------------------------------------------------
+# robots.txt
+# ---------------------------------------------------------------------------
+
+class _FakeResponse:
+    def __init__(self, text, status=200):
+        self.text, self.status_code = text, status
+
+
+def _fake_requests(monkeypatch, text, status=200):
+    import robots as robots_module
+    robots_module.clear()
+    import requests
+
+    def fake_get(url, **kwargs):
+        return _FakeResponse(text, status)
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    return robots_module
+
+
+def test_a_disallowed_path_is_refused(monkeypatch):
+    module = _fake_requests(monkeypatch, "User-agent: *\nDisallow: /\n")
+    assert module.may_fetch("https://blocked.sg/") is False
+
+
+def test_an_allowed_path_is_permitted(monkeypatch):
+    module = _fake_requests(monkeypatch, "User-agent: *\nDisallow: /admin\n")
+    assert module.may_fetch("https://open.sg/") is True
+    assert module.may_fetch("https://open.sg/admin/x") is False
+
+
+def test_a_missing_robots_file_means_yes(monkeypatch):
+    """Silence is permission. That is what the standard says."""
+    module = _fake_requests(monkeypatch, "", status=404)
+    assert module.may_fetch("https://nofile.sg/") is True
+
+
+def test_a_broken_robots_file_means_yes(monkeypatch):
+    module = _fake_requests(monkeypatch, "\x00\x01 not a robots file")
+    assert module.may_fetch("https://junk.sg/") is True
+
+
+def test_the_file_is_read_once_per_host(monkeypatch):
+    import robots as robots_module
+    import requests
+    robots_module.clear()
+    calls = []
+
+    def fake_get(url, **kwargs):
+        calls.append(url)
+        return _FakeResponse("User-agent: *\nDisallow: /admin\n")
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    robots_module.may_fetch("https://once.sg/a")
+    robots_module.may_fetch("https://once.sg/b")
+    robots_module.may_fetch("https://once.sg/c")
+    assert len(calls) == 1
+
+
+def test_a_blocked_site_is_never_scored_on_evidence_it_did_not_give():
+    result = scoring.score_website_lead({}, 12, error="blocked by robots.txt")
+    assert result["warm"] is False
+    assert result["score"] == 0
+    assert "did not look" in result["hook"]
+    # It must not claim a broken funnel or ad spend from an unread page.
+    assert "no form" not in result["hook"]
+    assert "paid ads" not in result["hook"]

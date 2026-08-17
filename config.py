@@ -72,6 +72,12 @@ POLITE_DELAY_SECONDS = _float("LEADSCAN_POLITE_DELAY", 1.0)
 # Wait this long between Google Places requests.
 PLACES_DELAY_SECONDS = _float("LEADSCAN_PLACES_DELAY", 0.2)
 
+# Read robots.txt and obey it. LeadScan opens hundreds of sites in a loop, so
+# it is a crawler whatever the user agent says.
+RESPECT_ROBOTS = os.getenv("LEADSCAN_RESPECT_ROBOTS", "1").strip().lower() not in (
+    "0", "false", "no"
+)
+
 USER_AGENT = os.getenv(
     "LEADSCAN_USER_AGENT",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "

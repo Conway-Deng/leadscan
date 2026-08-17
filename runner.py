@@ -85,7 +85,7 @@ class Journal:
 
 
 def run_audits(businesses, social_only=False, cache=None, log=print,
-               workers=3, deep=True, journal_path=None):
+               workers=3, deep=True, journal_path=None, respect_robots=True):
     """
     Audit every business and give back the result rows.
 
@@ -124,7 +124,8 @@ def run_audits(businesses, social_only=False, cache=None, log=print,
     def worker(worker_number):
         from browser import Browser
         try:
-            with Browser(log=lambda m: None) as browser:
+            with Browser(log=lambda m: None,
+                         respect_robots=respect_robots) as browser:
                 while True:
                     try:
                         index, key, business = work.get_nowait()
@@ -178,7 +179,9 @@ def _error_row(business, error):
         "name": business.get("name", ""), "phone": business.get("phone", ""),
         "address": business.get("address", ""),
         "review_count": business.get("review_count"),
-        "rating": business.get("rating"), "instagram_followers": None,
+        "rating": business.get("rating"),
+        "opening_hours": " | ".join(business.get("opening_hours") or []),
+        "instagram_followers": None,
         "instagram": "", "facebook": "", "tiktok": "", "email": "",
         "ad_tags": "", "capture_methods": "", "load_seconds": None,
         "hook": "", "reasons": f"scan failed: {str(error)[:120]}",

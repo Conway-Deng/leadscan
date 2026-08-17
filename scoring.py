@@ -149,6 +149,17 @@ def score_website_lead(findings, review_count, follower_count=None, error=None):
             ["no website", "run --social-only to find their Instagram or TikTok"],
         )
 
+    # --- The site said no to an automated read. Nothing was seen, so nothing
+    #     is claimed. The firm stays in the output so the caller can open the
+    #     site by hand, but it is never scored on evidence that does not exist.
+    if error == "blocked by robots.txt":
+        return _result(
+            0, "", False, False,
+            "This site asks automated tools not to read it, so LeadScan did not "
+            "look. Open it by hand before you call.",
+            ["robots.txt disallows an automated read"],
+        )
+
     # --- The site is dead or broken. This is a strong lead only for a small
     #     firm. A large established firm that returns one 503 is almost always
     #     a temporary fault, not a broken funnel. ---
