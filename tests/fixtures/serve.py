@@ -66,7 +66,51 @@ NOISE = """<!doctype html><html xmlns:fb="http://www.facebook.com/2008/fbml">
 <a href="https://www.facebook.com/sharer/sharer.php?u=x">share</a>
 </body></html>"""
 
-PAGES = {"/hot": HOT, "/warm": WARM, "/solid": SOLID, "/noise": NOISE}
+# 5. The false positive the contact-page check exists to stop. The home page
+#    has a Meta Pixel and no way to capture a lead, so a home-page-only scan
+#    calls it HOT and the caller opens with "you have no way to take an
+#    enquiry" to a firm that has a perfectly good enquiry form on /contact.
+DEEP_HOME = """<!doctype html><html><head><title>Harbour Aircon</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>fbq('init','2020202020');</script>
+</head><body>
+<h1>Harbour Aircon</h1>
+<p>Servicing, chemical wash and installation across Singapore.</p>
+<nav><a href="/deep/about">About</a> <a href="/deep/contact">Contact us</a>
+<a href="/deep/privacy">Privacy policy</a></nav>
+</body></html>"""
+
+DEEP_CONTACT = """<!doctype html><html><head><title>Contact Harbour Aircon</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"></head><body>
+<h1>Contact us</h1>
+<form action="/enquiry" method="post">
+  <input type="text" name="name" placeholder="Name">
+  <input type="tel" name="phone" placeholder="Phone">
+  <textarea name="message"></textarea>
+  <button>Send</button>
+</form>
+<a href="https://wa.me/6598765432">WhatsApp us</a>
+<p>Email <a href="mailto:hello@harbouraircon.com.sg">hello@harbouraircon.com.sg</a></p>
+</body></html>"""
+
+DEEP_PRIVACY = """<!doctype html><html><head><title>Privacy</title></head>
+<body><h1>Privacy policy</h1><p>We keep your data. Contact the DPO.</p>
+<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod
+tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam,
+quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo.</p>
+</body></html>"""
+
+# 6. A parked domain. The firm believes it has a website. It has not. This is
+#    not a broken funnel, so the opening line has to be different.
+PARKED = """<!doctype html><html><head><title>coolbreeze.sg</title></head><body>
+<h1>coolbreeze.sg</h1>
+<p>This domain is for sale. Buy this domain and start your project today.</p>
+</body></html>"""
+
+PAGES = {"/hot": HOT, "/warm": WARM, "/solid": SOLID, "/noise": NOISE,
+         "/deep": DEEP_HOME, "/deep/contact": DEEP_CONTACT,
+         "/deep/about": DEEP_HOME, "/deep/privacy": DEEP_PRIVACY,
+         "/parked": PARKED}
 
 
 class Handler(BaseHTTPRequestHandler):

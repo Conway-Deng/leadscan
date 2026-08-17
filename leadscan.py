@@ -34,6 +34,7 @@ import cache as cache_module
 import checks
 import config
 import report
+import runner
 import scoring
 import sources
 
@@ -61,32 +62,29 @@ class Logger:
                 pass
 
 
-def audit_all(businesses, social_only=False, cache=None, log=print):
+def audit_all(businesses, social_only=False, cache=None, log=print,
+              workers=1, deep=True, journal_path=None):
     """Render and score every business. Give back all the result rows."""
-    from browser import Browser
+    return runner.run_audits(businesses, social_only=social_only, cache=cache,
+                             log=log, workers=workers, deep=deep,
+                             journal_path=journal_path)
 
-    results = []
-    total = len(businesses)
-    with Browser(log=log) as browser:
-        for index, business in enumerate(businesses, 1):
-            try:
-                if social_only:
-                    row = checks.audit_social_only(browser, business, cache=cache)
-                else:
-                    row = checks.audit_business(browser, business, cache=cache)
-            except Exception as error:      # one bad site must not kill the run
-                log(f"  [{index:>3}/{total}] ERROR {business.get('name', '?')}: "
-                    f"{str(error)[:100]}")
-                continue
-            results.append(row)
-            if row["disqualified"]:
-                mark = "SKIP"
-            elif row["warm"]:
-                mark = (row.get("tier") or "warm").upper()[:4]
-            else:
-                mark = "    "
-            log(f"  [{index:>3}/{total}] {row['score']:>3} {mark:<4} {row['name']}")
-    return results
+
+def _apply_exclusions(businesses, path):
+    """
+    Remove firms that appear in a previously written call sheet.
+
+    The match uses the same identity rules as de-duplication, so a firm is
+    recognised again even when Google returns a different branch name or the
+    phone number is written in another shape.
+    """
+    previous = sources.from_csv(path)
+    banned = set()
+    for record in previous:
+        banned.update(sources._identity_keys(record))
+    kept = [b for b in businesses
+            if not banned.intersection(sources._identity_keys(b))]
+    return kept, len(businesses) - len(kept)
 
 
 def build_parser():
@@ -111,6 +109,19 @@ def build_parser():
     parser.add_argument("--include-cool", action="store_true",
                         help="Also keep quiet firms with a defect but no proof "
                              "that they market themselves")
+    parser.add_argument("--workers", type=int, default=3, metavar="N",
+                        help="How many sites to render at the same time "
+                             "(default 3). Each worker uses about 200 MB")
+    parser.add_argument("--shallow", action="store_true",
+                        help="Read the home page only. By default the scan also "
+                             "follows the first contact link, because most firms "
+                             "keep the enquiry form on /contact")
+    parser.add_argument("--exclude", metavar="PATH",
+                        help="CSV of firms already contacted. Matching firms are "
+                             "dropped before any site is rendered")
+    parser.add_argument("--journal", metavar="PATH",
+                        help="Append every finished firm to this JSON Lines file. "
+                             "Re-running the command skips whatever is in it")
     parser.add_argument("--no-cache", action="store_true",
                         help="Ignore the cache and fetch everything again")
     parser.add_argument("--clear-cache", action="store_true",
@@ -165,6 +176,18 @@ def main(argv=None):
         log("No businesses found.")
         return 1
 
+    # --- Drop firms that were already contacted. Calling somebody twice costs
+    #     more goodwill than a missed lead costs money. ---
+    if args.exclude:
+        if not os.path.exists(args.exclude):
+            log(f"Exclusion file not found: {args.exclude}")
+            return 2
+        businesses, dropped = _apply_exclusions(businesses, args.exclude)
+        log(f"{dropped} firms dropped as already contacted.")
+        if not businesses:
+            log("Every firm in this sweep was already contacted.")
+            return 1
+
     # --- --social-only keeps only the firms with no website ---
     if args.social_only:
         total = len(businesses)
@@ -179,8 +202,14 @@ def main(argv=None):
         log(f"\nRendering and scoring {len(businesses)} sites "
             f"(a few seconds each)...\n")
 
-    results = audit_all(businesses, social_only=args.social_only,
-                        cache=store, log=log)
+    journal_path = args.journal
+    if journal_path is None:
+        stem, _ = os.path.splitext(args.out)
+        journal_path = stem + ".journal.jsonl"
+
+    results = audit_all(businesses, social_only=args.social_only, cache=store,
+                        log=log, workers=args.workers, deep=not args.shallow,
+                        journal_path=journal_path)
 
     # --- Write the call sheet ---
     leads = report.select_leads(results, args.want, include_cool=args.include_cool)

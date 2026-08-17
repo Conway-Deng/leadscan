@@ -168,6 +168,21 @@ def score_website_lead(findings, review_count, follower_count=None, error=None):
             [f"site error: {error}"],
         )
 
+    # --- A parked, expired or unpublished domain. The firm believes it has a
+    #     website. It does not. That is a different conversation from a website
+    #     with a defect, so it needs its own opening line. ---
+    if findings.get("is_parked"):
+        quiet = _quiet(review_count)
+        marker = (findings.get("parked_markers") or ["placeholder page"])[0]
+        return _result(
+            75 if quiet else 45,
+            TIER_COOL, True, False,
+            "Your web address does not lead to a working website. It shows a "
+            "placeholder page, so anybody who looks you up finds nothing and "
+            "goes to the next firm on the list.",
+            [f"parked or unpublished site: {marker}"],
+        )
+
     pains = _pains(findings)
     channel_points, tier, opening, leak = _channel_story(findings, follower_count)
     score = sum(points for _, points, _ in pains) + channel_points

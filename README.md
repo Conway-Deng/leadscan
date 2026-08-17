@@ -103,9 +103,51 @@ traffic but you cannot capture it" is a useful thing to know on the call.
 | `--out PATH` | Where to write. The `.html` and `.xlsx` go beside it. |
 | `--social-only` | Target firms with NO website, only Instagram or TikTok. |
 | `--include-cool` | Also keep quiet firms that show no marketing effort. |
+| `--workers N` | Render N sites at the same time (default 3). Each worker uses about 200 MB. |
+| `--shallow` | Read the home page only. See "The contact page" below. |
+| `--exclude PATH` | A CSV of firms already contacted. They are dropped before any site is rendered. |
+| `--journal PATH` | Append every finished firm to a JSON Lines file. See "If a run stops". |
 | `--no-cache` | Fetch everything again. |
 | `--clear-cache` | Delete the cache folder first. |
 | `--log PATH` | Append the run log to a file. |
+
+## The contact page
+
+Most small firms keep the enquiry form on `/contact` and use the home page for
+pictures. A scan of the home page alone therefore reports "cannot capture a
+lead" for a firm that captures leads perfectly well, and the caller opens with a
+statement the prospect knows is wrong. That is worse than a missed lead.
+
+So when the home page shows no way to capture a lead, the scan follows the
+first contact, enquiry, booking or quote link on the same site and looks there
+too. A second page can only ADD evidence, never remove it: the speed, the HTTPS
+state and the mobile viewport stay as measured on the home page, because that is
+the page the advertisement sends people to.
+
+Pass `--shallow` to switch this off. On the fixture site it changes one firm
+from "hot, cannot capture a lead" at rank 3 to rank 7 with its real enquiry form
+and email address found.
+
+## If a run stops
+
+Every finished firm is appended to `warm_leads.journal.jsonl` as soon as it is
+scored. If a run is interrupted — a sleeping laptop, a dropped network, Ctrl-C —
+start the same command again and every firm already in the journal is skipped.
+Nothing is scanned twice and no API call is paid for twice.
+
+The journal is also the honest record of what a run really saw. The CSV holds
+only the leads that were kept.
+
+## Speed
+
+Sites are rendered in parallel, three at a time by default. One firm takes about
+five seconds, so a 200-firm sweep goes from over half an hour to roughly ten
+minutes. Raise `--workers` if you have the memory; each worker runs its own
+browser and uses about 200 MB.
+
+The polite delay is per host, not global. Waiting a second between two different
+companies' servers protects nobody; waiting a second before asking the same
+server for a second page does.
 
 ## The cache
 
@@ -121,7 +163,8 @@ python -m pip install -r requirements-dev.txt
 python -m pytest tests/ -q
 ```
 
-82 tests. None of them needs a browser, a key or a network connection.
+107 tests. None of them needs a browser, a key or a network connection.
+They run in under a second and gate every push through GitHub Actions.
 
 To try the whole pipeline end to end with no key and no internet:
 
@@ -130,10 +173,11 @@ python tests/fixtures/serve.py 8099 &
 python leadscan.py --input tests/fixtures/fixture_businesses.csv --include-cool
 ```
 
-The fixture site holds four pages with known answers: a confirmed advertiser
+The fixture site holds six cases with known answers: a confirmed advertiser
 with no funnel (hot), an Instagram-only firm (warm), a firm with analytics and
-a working form (not a lead), and a page full of footer noise that must not
-produce a fake social profile.
+a working form (not a lead), a page full of footer noise that must not produce a
+fake social profile, a firm whose form is on `/contact` (which must not be
+reported as broken), and a parked domain.
 
 ## Files
 
@@ -147,6 +191,7 @@ produce a fake social profile.
 | `scoring.py` | Judges one business against the ICP. Pure. |
 | `checks.py` | Joins the three above into one audit. |
 | `report.py` | Writes the CSV, HTML and XLSX call sheets. |
+| `runner.py` | Parallel workers and the crash-safe journal. |
 | `cache.py` | The resumable disk cache. |
 | `adlibrary.py` | Optional Meta Ad Library check. **Read the note at the top.** |
 | `make_readable.py` | Rebuild the call sheet from an edited CSV. |
@@ -157,7 +202,9 @@ produce a fake social profile.
 * The output files and the cache hold business phone numbers taken from public
   listings. They are git-ignored. Keep them private and delete them when the
   campaign ends.
-* Each site is hit once, with a one-second gap between sites. Raise
-  `LEADSCAN_POLITE_DELAY` before you run at high volume.
+* At most two pages are read per firm, with a one-second gap between two hits on
+  the same server. Raise `LEADSCAN_POLITE_DELAY` before you run at high volume.
+* `--exclude` stops you calling the same firm twice across sweeps. Point it at
+  the last call sheet you worked through.
 
 See `HANDOFF.md` for the state of the work and what to do next.

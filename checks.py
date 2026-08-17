@@ -18,11 +18,22 @@ import scoring
 import config
 
 
-def audit_business(browser, business, cache=None):
-    """Full pipeline for one business that has a website."""
+def audit_business(browser, business, cache=None, deep=True):
+    """
+    Full pipeline for one business that has a website.
+
+    `deep` follows the first contact link on the site. Most small firms keep
+    the enquiry form on /contact and use the home page for pictures, so a scan
+    of the home page alone reports "cannot capture a lead" for a firm that
+    can. That false positive is worse than a missed lead, because the caller
+    opens with a statement the prospect knows is wrong.
+    """
     website = (business.get("website") or "").strip()
 
     findings, error, final_url = _render_and_detect(browser, website, cache)
+
+    if deep and findings and not findings.get("can_capture_lead"):
+        findings = _check_contact_pages(browser, findings, cache)
 
     # If Google lists an Instagram or TikTok page as the "website", treat it as
     # the social profile. This must happen BEFORE the social marketing test,
@@ -105,6 +116,35 @@ def _render_and_detect(browser, website, cache):
         cache.put("render", website,
                   {"findings": findings, "error": error, "final_url": final_url})
     return findings, error, final_url
+
+
+def _check_contact_pages(browser, findings, cache, limit=2):
+    """
+    Follow the contact links found on the home page and fold in what they show.
+
+    The search stops as soon as a capture method is found, because one is
+    enough to prove the firm can take an enquiry.
+    """
+    for url in (findings.get("contact_links") or [])[:limit]:
+        extra = cache.get("page", url) if cache else None
+        if extra is None:
+            html, _final_url, _load, error = browser.render(url)
+            if error or not html:
+                # Store the failure too, so a dead contact link is not fetched
+                # again on the next run.
+                if cache:
+                    cache.put("page", url, {})
+                continue
+            # Only the part that can change the verdict is kept, not the page.
+            extra = detect.read_second_page(html, url)
+            if cache:
+                cache.put("page", url, extra)
+        if not extra:
+            continue
+        findings = detect.merge_second_page(findings, extra)
+        if findings.get("can_capture_lead"):
+            break
+    return findings
 
 
 def _cached_followers(browser, profile_url, cache):

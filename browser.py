@@ -32,6 +32,14 @@ _OG_DESCRIPTION = re.compile(
 _FOLLOWERS_IN_TEXT = re.compile(r"([\d.,]+\s*[KMkm]?)\s*Followers", re.I)
 
 
+def _host_of(url):
+    """The host part of a URL, used to keep the polite delay per server."""
+    try:
+        return urllib.parse.urlparse(url or "").netloc.lower()
+    except ValueError:
+        return ""
+
+
 def parse_count(text):
     """Turn '1,234' or '12.3K' or '1.1M' into an integer. None when unreadable."""
     if not text:
@@ -65,7 +73,7 @@ class Browser:
             config.POLITE_DELAY_SECONDS if polite_delay is None else polite_delay
         )
         self.log = log or (lambda message: None)
-        self._last_hit = 0.0
+        self._last_hit_by_host = {}
 
     def __enter__(self):
         self._playwright = sync_playwright().start()
@@ -95,11 +103,21 @@ class Browser:
             pass
         return False
 
-    def _wait_politely(self):
-        gap = time.time() - self._last_hit
+    def _wait_politely(self, url=""):
+        """
+        Wait before hitting the SAME host again.
+
+        The delay used to be global, so a sweep of 200 different sites paid 200
+        seconds of waiting for no reason: no single host was under any load.
+        The courtesy that matters is not hitting one server twice in quick
+        succession, which is exactly what the contact-page check does.
+        """
+        host = _host_of(url)
+        last = self._last_hit_by_host.get(host, 0.0)
+        gap = time.time() - last
         if gap < self.polite_delay:
             time.sleep(self.polite_delay - gap)
-        self._last_hit = time.time()
+        self._last_hit_by_host[host] = time.time()
 
     # -----------------------------------------------------------------
     # Page rendering
@@ -120,7 +138,7 @@ class Browser:
         timeouts = [config.NAV_TIMEOUT_MS] + [config.RETRY_TIMEOUT_MS] * config.RENDER_RETRIES
         last_error = "unreachable"
         for attempt, timeout in enumerate(timeouts):
-            self._wait_politely()
+            self._wait_politely(url)
             html, final_url, load, error = self._render_once(url, timeout)
             if error is None:
                 return html, final_url, load, None
@@ -165,7 +183,7 @@ class Browser:
         """
         if not profile_url:
             return None
-        self._wait_politely()
+        self._wait_politely(profile_url)
         page = self.context.new_page()
         try:
             page.goto(profile_url, timeout=config.NAV_TIMEOUT_MS,
@@ -190,7 +208,7 @@ class Browser:
         region = region or config.SOCIAL_SEARCH_REGION
         query = f"{name} {region} instagram tiktok".strip()
         url = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote_plus(query)
-        self._wait_politely()
+        self._wait_politely(url)
         page = self.context.new_page()
         try:
             page.goto(url, timeout=config.NAV_TIMEOUT_MS, wait_until="domcontentloaded")

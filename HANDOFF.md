@@ -1,6 +1,6 @@
 # HANDOFF — LeadScan
 
-Last updated: 2026-08-17 (v3)
+Last updated: 2026-08-17 (v3.1)
 
 ## The idea in one line
 
@@ -119,6 +119,72 @@ list with filters and clickable links. The CSV stays as the record.
 
 ---
 
+## v3.1 — the second pass
+
+### 8. The contact page: the last big source of false positives
+
+Most small firms keep the enquiry form on `/contact` and use the home page for
+pictures. A home-page-only scan therefore reported "cannot capture a lead" for
+a firm that captures leads perfectly well. That is worse than a missed lead:
+the caller opens with a statement the prospect knows is wrong, and the call is
+over in one sentence.
+
+When the home page shows no capture method, the scan now follows the first
+contact, enquiry, booking or quote link on the same site. A second page can only
+ADD evidence, never remove it — speed, HTTPS and the mobile viewport stay as
+measured on the home page, because that is the page an advertisement sends
+people to. Privacy pages, blog posts and external links are not followed.
+`--shallow` switches it off.
+
+Measured on the fixture site: one firm moves from "HOT, cannot capture a lead"
+at rank 3 to rank 7, with its real form, its WhatsApp link and its email address
+found. Expect the same correction on real data, and expect the hot list to
+shrink again.
+
+### 9. Parked and unpublished domains
+
+A domain that is for sale, suspended or still showing "coming soon" is not a
+broken funnel. The firm believes it has a website and it does not, so the
+opening line has to be different. Detected from the visible text only — never
+from a script or a comment.
+
+One heuristic was tried and **deliberately removed**: "this page has very little
+text, so it is probably a placeholder". It fired on two perfectly good fixture
+sites. A false "your website is parked" is exactly the kind of claim that ends a
+cold call, so if the scan cannot prove it, it does not say it.
+
+### 10. Parallel rendering, and a run that survives a crash
+
+* `--workers N` (default 3) renders N sites at once, each worker with its own
+  browser, because Playwright's synchronous API belongs to the thread that made
+  it. A 200-firm sweep goes from over half an hour to roughly ten minutes.
+  Rows come back in input order, so two runs of the same input give an identical
+  file — verified.
+* **The polite delay is now per host, not global.** The old global delay cost a
+  200-firm sweep 200 seconds of waiting that protected nobody: every firm is on
+  a different server. What the delay is actually for is not asking one server
+  for two pages in quick succession, which is what the contact-page check does.
+* **A journal** (`warm_leads.journal.jsonl`) records every firm the moment it is
+  scored. Start the same command again after an interruption and everything in
+  the journal is skipped. Verified by truncating a journal, wiping the cache and
+  re-running: only the missing four firms were re-scanned.
+* Ctrl-C now stops cleanly and says how to carry on.
+
+### 11. `--exclude`: stop calling the same firm twice
+
+Point it at the last call sheet you worked through. Matching firms are dropped
+before any site is rendered, so they cost nothing. The match uses the same
+identity rules as de-duplication, so a firm is recognised again even when Google
+returns a different branch name or a differently formatted phone number.
+
+### 12. Continuous integration
+
+`.github/workflows/tests.yml` runs the 107 tests on Python 3.10 and 3.12 for
+every push, and fails the build if a Google API key pattern or a tracked `.env`
+ever reaches the repository.
+
+---
+
 ## Read this before you build the Meta Ad Library gate
 
 The v2 plan was: get a Meta app and identity check (about one day) and use the
@@ -168,19 +234,21 @@ lead, and you can say exactly what you saw.
 
 ### C. Worth building next
 
-- [ ] **Second-page check.** Many firms put the booking form on `/contact`, not
-      on the home page. Scanning the home page alone marks them as broken. Fetch
-      the first internal link whose text matches contact, enquiry, book or
-      quote, and treat a capture method found there as a capture method. This is
-      the largest remaining source of false positives.
-- [ ] **Email enrichment beyond the home page.** `detect.find_emails` works, but
-      most firms hide the address on `/contact`. The same second-page fetch
-      solves both.
+- [x] ~~Second-page check~~ — done in v3.1.
+- [x] ~~Email enrichment beyond the home page~~ — done, via the same fetch.
 - [ ] **Rank by opportunity, not only by defect.** A firm with 8 reviews and a
       Meta Pixel is worth more than a firm with 8 reviews and no pixel, and the
-      score already says so. What it does not know is deal size. A tag for the
-      niche (aesthetics is worth more per client than aircon) would sharpen the
-      order of the call list.
+      score already says so. What it does not know is deal size. A per-sweep
+      weight in `config.py` (aesthetics is worth more per client than aircon)
+      would sharpen the order of a combined call list. Small change, real
+      effect once more than one niche has been swept.
+- [ ] **Call when they are open.** Places API (New) can return
+      `regularOpeningHours` in the same field mask at no extra request. Flagging
+      "open now" on the call sheet would stop wasted dials. About an hour of
+      work: add the field to `FIELD_MASK`, carry it through `place_from_new`,
+      and show a badge in `report.write_html`.
+- [ ] **A cost estimate before a sweep.** `--dry-run` printing "this sweep will
+      make about 30 Places requests" would make the API bill predictable.
 
 ### D. Ideas that were considered and rejected
 
@@ -199,7 +267,9 @@ lead, and you can say exactly what you saw.
   campaign ends.
 * **Check the repository is still private.** It holds the ICP, the sweep terms
   and the whole method, and the handoff note says it should be private.
-* One hit per site, one second apart. Raise `LEADSCAN_POLITE_DELAY` before you
-  run at high volume.
+* At most two pages per firm, with a one-second gap between two hits on the
+  same server. Raise `LEADSCAN_POLITE_DELAY` before you run at high volume.
+* `*.journal.jsonl` is git-ignored. It holds every firm a run saw, including
+  phone numbers, and it is more complete than the call sheet.
 * Business names from Google are escaped before they reach the HTML call sheet
   and before they reach the CSV or the XLSX.

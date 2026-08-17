@@ -26,6 +26,8 @@ almost the same in the page source and mean completely different things.
 """
 
 import re
+import urllib.parse
+
 from bs4 import BeautifulSoup
 
 # ---------------------------------------------------------------------------
@@ -265,6 +267,107 @@ def extract_socials(html):
 
 
 # ---------------------------------------------------------------------------
+# The contact page
+# ---------------------------------------------------------------------------
+# Most small firms put the enquiry form on /contact and keep the home page for
+# pictures. A scan of the home page alone therefore reports "no lead capture"
+# for a firm that captures leads perfectly well. That was the largest source of
+# false positives, and a false positive is worse than a missed lead: the caller
+# opens with "you have no way to capture enquiries" to somebody who does, and
+# the call is over.
+
+# Link text or URL that points at a page where a form usually lives.
+_CONTACT_LINK = re.compile(
+    r"contact|enquir|inquir|get.?in.?touch|book|appointment|quote|consult|"
+    r"reach.?us|hubungi|kontak|talk.?to.?us|reach.?out",
+    re.I,
+)
+
+# Pages that hold the word "contact" but are not the contact page.
+_NOT_CONTACT_LINK = re.compile(
+    r"privacy|terms|cookie|policy|blog/|news/|careers|jobs|\.(?:pdf|jpg|png|zip)$",
+    re.I,
+)
+
+
+def find_contact_links(soup, base_url, limit=2):
+    """
+    Give back up to `limit` absolute URLs on the same site that probably hold a
+    contact form. The order follows how likely each link is to be the real one.
+    """
+    try:
+        base_host = urllib.parse.urlparse(base_url).netloc.lower()
+    except ValueError:
+        return []
+
+    scored = []
+    seen = set()
+    for tag in soup.find_all("a", href=True):
+        href = tag["href"].strip()
+        if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
+            continue
+        try:
+            absolute = urllib.parse.urljoin(base_url, href)
+        except ValueError:
+            continue
+        parsed = urllib.parse.urlparse(absolute)
+        if parsed.scheme not in ("http", "https"):
+            continue
+        # Stay on the same site. An external "book on Fresha" link is already
+        # counted as a capture method by find_capture_methods.
+        if parsed.netloc.lower() != base_host:
+            continue
+        clean = parsed._replace(fragment="").geturl()
+        if clean in seen or clean.rstrip("/") == base_url.rstrip("/"):
+            continue
+        text = " ".join(tag.stripped_strings)[:80]
+        target = f"{parsed.path} {text}"
+        if _NOT_CONTACT_LINK.search(target) or not _CONTACT_LINK.search(target):
+            continue
+        seen.add(clean)
+        # A short path such as /contact beats a deep one such as /blog/contact-us.
+        scored.append((len(parsed.path.strip("/").split("/")), len(clean), clean))
+
+    scored.sort()
+    return [url for _depth, _length, url in scored[:limit]]
+
+
+# ---------------------------------------------------------------------------
+# Parked and placeholder sites
+# ---------------------------------------------------------------------------
+# A domain that is parked, expired or still showing the builder's demo text is
+# not a broken funnel. It is a firm with no website at all that believes it has
+# one. The opening line has to be different, so the two must be told apart.
+
+_PARKED_MARKERS = [
+    ("domain for sale", re.compile(r"(?:this )?domain (?:is|may be) for sale", re.I)),
+    ("domain parked", re.compile(r"\b(?:parked (?:free )?(?:at|by)|parking page|"
+                                 r"buy this domain|domain (?:name )?parking)\b", re.I)),
+    ("hosting placeholder", re.compile(r"(?:default|welcome to (?:nginx|apache)|"
+                                       r"it works!|index of /)", re.I)),
+    ("site not published", re.compile(r"(?:website coming soon|coming soon!|"
+                                      r"under construction|site not published|"
+                                      r"this site is not yet|page is not available)", re.I)),
+    ("builder demo text", re.compile(r"lorem ipsum dolor sit amet", re.I)),
+    ("expired", re.compile(r"(?:account suspended|this account has been suspended|"
+                           r"expired domain)", re.I)),
+]
+
+
+def find_parked_markers(soup, html):
+    """Give back the reasons the page looks parked or unfinished."""
+    # Only the visible text is checked. A script or a comment that happens to
+    # hold one of these phrases must not condemn a working site.
+    text = soup.get_text(" ", strip=True)[:6000]
+    # Only an explicit phrase counts. A "this page looks a bit empty" guess was
+    # tried and removed: it fired on two perfectly good fixture sites, and a
+    # false "your website is parked" is exactly the kind of claim that ends a
+    # cold call in the first sentence. If the scan cannot prove it, it does not
+    # say it.
+    return [label for label, pattern in _PARKED_MARKERS if pattern.search(text)]
+
+
+# ---------------------------------------------------------------------------
 # Contact details on the page
 # ---------------------------------------------------------------------------
 
@@ -311,8 +414,12 @@ def analyze(html, final_url, load_seconds, slow_seconds=5.0):
     ad_tags = find_ad_tags(html)
     analytics_tags = find_analytics_tags(html)
     socials = extract_socials(html)
+    parked = find_parked_markers(soup, html)
 
     return {
+        "parked_markers": parked,
+        "is_parked": bool(parked),
+        "contact_links": find_contact_links(soup, final_url or ""),
         "capture_methods": capture_methods,
         "can_capture_lead": bool(capture_methods),
         # Only a real advertisement tag counts as spend.
@@ -331,3 +438,75 @@ def analyze(html, final_url, load_seconds, slow_seconds=5.0):
         "facebook": socials.get("facebook", ""),
         "tiktok": socials.get("tiktok", ""),
     }
+
+
+def read_second_page(html, url):
+    """
+    Pull only the parts of a second page that can change the verdict.
+
+    The result is small and JSON-safe, so the cache stores it instead of the
+    whole page. A contact page is often 200 kB of HTML and none of it is
+    needed after this step.
+    """
+    soup = BeautifulSoup(html or "", "html.parser")
+    return {
+        "url": url,
+        "capture_methods": find_capture_methods(soup, html or ""),
+        "ad_tags": find_ad_tags(html or ""),
+        "analytics_tags": find_analytics_tags(html or ""),
+        "socials": extract_socials(html or ""),
+        "emails": find_emails(html or ""),
+    }
+
+
+def merge_second_page(home, extra):
+    """
+    Fold what a second page shows into the home-page findings.
+
+    A second page can only ADD evidence. It can never take evidence away: a
+    contact page without a Meta Pixel does not mean the home page had none.
+    The speed, the HTTPS state and the mobile viewport stay as measured on the
+    home page, because that is the page the advertisement sends people to.
+    """
+    if not extra:
+        return home
+
+    merged = dict(home)
+    where = _short_path(extra.get("url", ""))
+
+    if extra.get("capture_methods"):
+        combined = list(home.get("capture_methods") or [])
+        for method in extra["capture_methods"]:
+            label = f"{method} (on {where})"
+            if method not in combined and label not in combined:
+                combined.append(label)
+        merged["capture_methods"] = combined
+        merged["can_capture_lead"] = True
+
+    for key in ("ad_tags", "analytics_tags"):
+        if extra.get(key):
+            merged[key] = sorted(set(list(home.get(key) or []) + extra[key]))
+    merged["spends_on_ads"] = bool(merged.get("ad_tags"))
+    merged["measures_only"] = bool(merged.get("analytics_tags")) and not merged["spends_on_ads"]
+
+    for network, link in (extra.get("socials") or {}).items():
+        if not merged.get(network):
+            merged[network] = link
+    merged["markets_on_social"] = bool(merged.get("instagram") or merged.get("tiktok"))
+
+    emails = list(home.get("emails") or [])
+    for address in extra.get("emails") or []:
+        if address not in emails:
+            emails.append(address)
+    merged["emails"] = emails[:3]
+
+    merged["pages_checked"] = list(home.get("pages_checked") or []) + [extra.get("url", "")]
+    return merged
+
+
+def _short_path(url):
+    try:
+        path = urllib.parse.urlparse(url).path.strip("/")
+    except ValueError:
+        return "another page"
+    return "/" + path if path else "another page"

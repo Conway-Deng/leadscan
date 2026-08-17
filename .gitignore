@@ -42,3 +42,7 @@ out/
 
 # pytest
 .pytest_cache/
+
+# Run journals (hold scraped phone numbers -- keep private)
+*.journal.jsonl
+*.jsonl
