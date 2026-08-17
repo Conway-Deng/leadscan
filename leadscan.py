@@ -1,199 +1,220 @@
 """
-leadscan.py  --  the command you run.
+leadscan.py -- the command you run.
 
 Pipeline:
-    sources  -> sweep many searches, dedupe, pull phone + reviews
-    checks   -> render each site, detect funnel/ads/socials, score vs the ICP
-    output   -> a ranked sheet of WARM leads only (influencers filtered out),
-                each with phone, reviews, socials, the problem, and the hook.
+    sources  -> sweep many searches, remove duplicates, pull phone + reviews
+    checks   -> render each site, detect the funnel and the ad tags, score it
+    report   -> a ranked call sheet as CSV, HTML and XLSX
 
-USAGE:
-    # Test with a CSV (no key, no Places sweep):
+USAGE
+    # Test with a CSV. No key needed.
     python leadscan.py --input sample_businesses.csv
 
-    # Full Singapore sweep (needs GOOGLE_PLACES_API_KEY in .env):
+    # Full Singapore sweep. Needs GOOGLE_PLACES_API_KEY in .env.
     python leadscan.py --sweep sg-interior --want 40
+
+    # Firms with no website at all.
+    python leadscan.py --sweep sg-car --social-only
+
+    # List the sweeps that are defined.
+    python leadscan.py --list-sweeps
 """
 
 import argparse
-import csv
+import datetime
 import os
 import sys
+
 from dotenv import load_dotenv
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-import sources
+import cache as cache_module
 import checks
+import config
+import report
+import scoring
+import sources
 
 load_dotenv()
 
-# Named search sweeps. Mixing terms + regions surfaces the quiet long-tail firms,
-# not just the famous ones. Add your own here anytime.
-SWEEPS = {
-    "sg-interior": [
-        "interior design firm Singapore",
-        "HDB renovation Singapore",
-        "condo renovation interior design Singapore",
-        "home renovation contractor Singapore",
-        "interior designer Jurong",
-        "interior designer Tampines",
-        "interior designer Woodlands",
-        "interior designer Bedok",
-        "interior designer Ang Mo Kio",
-        "interior designer Punggol",
-    ],
-    # High-ticket auto care: heavy Meta/IG advertisers, often run off IG/Linktree
-    # with no real funnel. Strongest non-interior niche for Nixon.
-    "sg-car": [
-        "car detailing Singapore",
-        "ceramic coating car Singapore",
-        "paint protection film Singapore",
-        "car wrapping Singapore",
-        "car grooming Singapore",
-        "car workshop Singapore",
-        "car servicing Singapore",
-        "car window tinting Singapore",
-        "car detailing studio Ubi",
-        "car detailing Sin Ming",
-    ],
-    # Smaller SG market (COE caps volume) -- run this only after the stronger
-    # niches; superbike dealers are high-ticket but few.
-    "sg-motorbike": [
-        "motorcycle workshop Singapore",
-        "motorbike servicing Singapore",
-        "motorcycle dealer Singapore",
-        "big bike dealer Singapore",
-        "superbike shop Singapore",
-        "motorcycle accessories shop Singapore",
-        "motorbike tyre shop Singapore",
-        "motorcycle repair Singapore",
-    ],
-    # Biggest Meta advertisers in SG, broken funnels everywhere, high LTV.
-    "sg-aesthetics": [
-        "aesthetic clinic Singapore",
-        "medical aesthetics Singapore",
-        "med spa Singapore",
-        "beauty salon Singapore",
-        "facial spa Singapore",
-        "slimming clinic Singapore",
-        "hair removal clinic Singapore",
-        "aesthetic clinic Orchard",
-        "aesthetic clinic Tampines",
-        "aesthetic clinic Jurong",
-    ],
-    # Huge SG market, many small players advertising with thin websites.
-    "sg-aircon": [
-        "aircon servicing Singapore",
-        "aircon installation Singapore",
-        "aircon chemical wash Singapore",
-        "aircon repair Singapore",
-        "aircon servicing Jurong",
-        "aircon servicing Tampines",
-        "aircon servicing Woodlands",
-        "aircon servicing Bedok",
-        "aircon servicing Sengkang",
-        "aircon servicing Yishun",
-    ],
-}
+SWEEPS = config.SWEEPS      # kept at this name for older scripts
 
 
-def audit_all(businesses, social_only=False):
-    """Render + score every business. Returns all result rows.
+class Logger:
+    """Print to the screen and, when asked, append to a log file."""
 
-    social_only=True switches to the no-website tier: instead of rendering a
-    site, we web-search each firm's IG/TikTok and score on 'they have no funnel'.
-    """
+    def __init__(self, path=None):
+        self.path = path
+        if path:
+            os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+
+    def __call__(self, message):
+        print(message, flush=True)
+        if self.path:
+            stamp = datetime.datetime.now().isoformat(timespec="seconds")
+            try:
+                with open(self.path, "a", encoding="utf-8") as handle:
+                    handle.write(f"{stamp} {message}\n")
+            except OSError:
+                pass
+
+
+def audit_all(businesses, social_only=False, cache=None, log=print):
+    """Render and score every business. Give back all the result rows."""
+    from browser import Browser
+
     results = []
-    with checks.Browser() as browser:
-        for i, biz in enumerate(businesses, 1):
-            if social_only:
-                row = checks.audit_social_only(browser, biz)
-            else:
-                row = checks.audit_business(browser, biz)
+    total = len(businesses)
+    with Browser(log=log) as browser:
+        for index, business in enumerate(businesses, 1):
+            try:
+                if social_only:
+                    row = checks.audit_social_only(browser, business, cache=cache)
+                else:
+                    row = checks.audit_business(browser, business, cache=cache)
+            except Exception as error:      # one bad site must not kill the run
+                log(f"  [{index:>3}/{total}] ERROR {business.get('name', '?')}: "
+                    f"{str(error)[:100]}")
+                continue
             results.append(row)
-            tag = "SKIP " if row["disqualified"] else ("WARM " if row["warm"] else "     ")
-            print(f"  [{i:>3}/{len(businesses)}] {row['score']:>3} {tag} {row['name']}")
+            if row["disqualified"]:
+                mark = "SKIP"
+            elif row["warm"]:
+                mark = (row.get("tier") or "warm").upper()[:4]
+            else:
+                mark = "    "
+            log(f"  [{index:>3}/{total}] {row['score']:>3} {mark:<4} {row['name']}")
     return results
 
 
-def write_output(results, out_path, want):
-    # Keep only warm, non-disqualified leads. Sort HOT (confirmed ad-spenders)
-    # before WARM, and by score within each tier -- so Nixon calls the surest bets
-    # first and never wastes a call on an unconfirmed lead while a hot one waits.
-    warm = [r for r in results if r["warm"] and not r["disqualified"]]
-    tier_rank = {"hot": 0, "warm": 1}
-    warm.sort(key=lambda r: (tier_rank.get(r.get("tier", "warm"), 1), -r["score"]))
-    warm = warm[:want]
+def build_parser():
+    parser = argparse.ArgumentParser(
+        description="Find quiet businesses that invest in being seen but cannot "
+                    "capture the leads.")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--input", help="CSV of businesses (columns: name, website)")
+    source.add_argument("--sweep", choices=sorted(config.SWEEPS),
+                        help="Named search sweep")
+    parser.add_argument("--list-sweeps", action="store_true",
+                        help="Show every sweep and its search terms, then stop")
+    parser.add_argument("--want", type=int, default=40,
+                        help="How many leads to keep (default 40)")
+    parser.add_argument("--cap", type=int, default=200,
+                        help="Most firms to scan in a sweep (default 200)")
+    parser.add_argument("--out", default="warm_leads.csv",
+                        help="Output path. The .html and .xlsx files sit beside it")
+    parser.add_argument("--social-only", action="store_true",
+                        help="Target businesses with NO website, only Instagram or "
+                             "TikTok. Slower, because each firm needs a web search")
+    parser.add_argument("--include-cool", action="store_true",
+                        help="Also keep quiet firms with a defect but no proof "
+                             "that they market themselves")
+    parser.add_argument("--no-cache", action="store_true",
+                        help="Ignore the cache and fetch everything again")
+    parser.add_argument("--clear-cache", action="store_true",
+                        help="Delete the cache folder before the run")
+    parser.add_argument("--log", metavar="PATH", help="Append the run log to a file")
+    return parser
 
-    fields = ["tier", "score", "name", "phone", "review_count", "instagram_followers",
-              "instagram", "facebook", "tiktok", "hook", "website", "status"]
-    with open(out_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(warm)
-    return warm
 
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    log = Logger(args.log)
 
-def main():
-    p = argparse.ArgumentParser(description="Find quiet businesses that invest in getting seen -- paid ads or organic IG/TikTok -- but can't capture the leads.")
-    src = p.add_mutually_exclusive_group(required=True)
-    src.add_argument("--input", help="CSV of businesses (columns: name, website)")
-    src.add_argument("--sweep", choices=list(SWEEPS), help="Named search sweep")
-    p.add_argument("--want", type=int, default=40, help="How many warm leads to keep (default 40)")
-    p.add_argument("--cap", type=int, default=200, help="Max firms to scan in a sweep (default 200)")
-    p.add_argument("--out", default="warm_leads.csv", help="Output CSV path")
-    p.add_argument("--social-only", action="store_true",
-                   help="Target businesses with NO website, only IG/TikTok. Web-searches "
-                        "each firm's socials and skips accounts over 3,000 followers. Slower.")
-    args = p.parse_args()
+    if args.list_sweeps:
+        for name in sorted(config.SWEEPS):
+            log(f"\n{name}  ({len(config.SWEEPS[name])} searches)")
+            for query in config.SWEEPS[name]:
+                log(f"    {query}")
+        return 0
 
+    if not args.input and not args.sweep:
+        log("Choose a source: --input FILE.csv or --sweep NAME "
+            "(--list-sweeps shows the names).")
+        return 2
+
+    if args.clear_cache:
+        import shutil
+        shutil.rmtree(config.CACHE_DIR, ignore_errors=True)
+        log(f"Cache cleared: {config.CACHE_DIR}")
+
+    store = cache_module.Cache(enabled=not args.no_cache)
+
+    # --- Source the businesses ---
     if args.input:
         if not os.path.exists(args.input):
-            sys.exit(f"File not found: {args.input}")
+            log(f"File not found: {args.input}")
+            return 2
         businesses = sources.from_csv(args.input)
+        businesses, removed = sources.dedupe(businesses)
+        if removed:
+            log(f"{removed} duplicate rows removed from the input file.")
     else:
         key = os.getenv("GOOGLE_PLACES_API_KEY")
+        log("Sourcing businesses from Google Places...")
         try:
-            print("Sourcing businesses from Google Places...")
-            businesses = sources.sweep_google_places(SWEEPS[args.sweep], key, cap=args.cap)
-        except (ValueError, RuntimeError) as e:
-            sys.exit(str(e))
+            businesses = sources.sweep(config.SWEEPS[args.sweep], key,
+                                       cap=args.cap, cache=store, log=log)
+        except (ValueError, RuntimeError) as error:
+            log(str(error))
+            return 1
 
     if not businesses:
-        sys.exit("No businesses found.")
+        log("No businesses found.")
+        return 1
 
-    # --social-only: keep ONLY firms with no website -- everything they do runs
-    # off IG/TikTok, and having no funnel at all is the whole reason to call them.
+    # --- --social-only keeps only the firms with no website ---
     if args.social_only:
         total = len(businesses)
-        businesses = [b for b in businesses if not b.get("website")]
-        print(f"Social-only mode: {len(businesses)} of {total} firms have no website.")
+        businesses = [b for b in businesses if not (b.get("website") or "").strip()]
+        log(f"Social-only mode: {len(businesses)} of {total} firms have no website.")
         if not businesses:
-            sys.exit("No no-website businesses found in this sweep.")
-
-    if args.social_only:
-        print(f"\nWeb-searching + scoring {len(businesses)} no-website firms "
-              f"(a few seconds each, slower than normal)...\n")
+            log("No firms without a website in this sweep.")
+            return 1
+        log(f"\nSearching and scoring {len(businesses)} firms "
+            f"(a few seconds each)...\n")
     else:
-        print(f"\nRendering + scoring {len(businesses)} sites (a few seconds each)...\n")
-    results = audit_all(businesses, social_only=args.social_only)
-    warm = write_output(results, args.out, args.want)
+        log(f"\nRendering and scoring {len(businesses)} sites "
+            f"(a few seconds each)...\n")
 
+    results = audit_all(businesses, social_only=args.social_only,
+                        cache=store, log=log)
+
+    # --- Write the call sheet ---
+    leads = report.select_leads(results, args.want, include_cool=args.include_cool)
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    written = report.write_all(leads, args.out, stamp=stamp)
+
+    counts = {}
+    for row in leads:
+        tier = row.get("tier") or "cool"
+        counts[tier] = counts.get(tier, 0) + 1
     skipped = sum(1 for r in results if r["disqualified"])
-    hot_n = sum(1 for r in warm if r.get("tier") == "hot")
-    print(f"\nDone. {len(warm)} warm leads written to {args.out} "
-          f"({hot_n} HOT confirmed ad-spenders, {len(warm) - hot_n} warm)")
-    if args.social_only:
-        print(f"({skipped} firms over 3,000 followers filtered out.)")
+
+    log("")
+    log(f"Done. {len(leads)} leads kept from {len(results)} firms scanned.")
+    log("  " + ", ".join(
+        f"{counts.get(tier, 0)} {tier}" for tier in ("hot", "warm", "cool")
+    ))
+    log(f"  {skipped} firms skipped (too large a following).")
+    log(f"  {store.summary()}")
+    for kind, path in written.items():
+        log(f"  {kind:<5} {path}")
+
+    if leads:
+        top = leads[0]
+        log("")
+        log(f"Top lead: {top['name']}  (score {top['score']}, "
+            f"{top.get('tier') or 'cool'})  {top['phone']}")
+        log(f'  Opening line: "{top["hook"]}"')
+        log("")
+        log("Open the .html file in a browser to start calling.")
     else:
-        print(f"({skipped} influencer-run firms filtered out.)")
-    if warm:
-        top = warm[0]
-        print(f"\nTop lead: {top['name']}  (score {top['score']})  {top['phone']}")
-        print(f"  Opening line: \"{top['hook']}\"")
+        log("\nNo leads matched. Try --include-cool, or a different sweep.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

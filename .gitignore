@@ -30,3 +30,15 @@ claims/
 lanes/
 messages/
 newcards/
+
+# Cache of Places results and rendered pages (holds scraped data -- keep private)
+.leadscan-cache/
+
+# Generated call sheets in every format
+warm_leads.xlsx
+out/
+*.xlsx
+!tests/fixtures/*.xlsx
+
+# pytest
+.pytest_cache/
