@@ -11,9 +11,10 @@ people from working the list. The scan already knows the one true thing about
 each firm, so it can write the opening.
 
 THE RULE IS THE SAME AS EVERYWHERE ELSE
-The message says only what the scan saw. It never claims an advertising budget
-that was not detected, and it never promises a result. It offers the review,
-because the review is the thing of value and it costs nothing to give.
+The message says only what the scan saw. It never treats an installed tag as
+proof of a live campaign or an advertising budget, and it never promises a
+result. It offers the review, because the review is the thing of value and it
+costs nothing to give.
 
 Two channels, because Singapore small businesses answer WhatsApp and ignore
 email:
@@ -37,9 +38,9 @@ def _observation(row):
                 "anyone who looks you up finds nothing")
     if not capture:
         if tags:
-            return (f"you have a {tags[0]} running but no form, booking link or "
+            return (f"your site has {tags[0]} installed but no form, booking link or "
                     f"tap-to-call on the page",
-                    "the traffic you pay for has nowhere to go")
+                    "people who arrive on the page have no clear next step")
         return ("there is no form, booking link or tap-to-call on the page",
                 "people who are ready to buy have no easy next step")
     if "not built for a phone" in reasons or "phone screen" in reasons:

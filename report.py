@@ -34,7 +34,7 @@ SHEET_COLUMNS = [
     ("Business", "name", False),
     ("Phone", "phone", False),
     ("What to say", "hook", False),
-    ("Ad tags found", "ad_tags", False),
+    ("Advertising tags installed", "ad_tags", False),
     ("Reviews", "review_count", False),
     ("IG followers", "instagram_followers", False),
     ("Email", "email", False),
@@ -65,7 +65,7 @@ def select_leads(results, want, include_cool=False):
     """
     Keep the leads worth calling, best first.
 
-    'hot'  = a live ad tag was found and the funnel leaks.
+    'hot'  = advertising-related infrastructure was found and the funnel leaks.
     'warm' = the firm builds an audience on social and the funnel leaks.
     'cool' = a quiet firm with a real defect, but no proof of marketing effort.
     """
@@ -284,7 +284,7 @@ def write_xlsx(rows, path):
         "cool": PatternFill("solid", fgColor="EAF2DC"),
     }
     widths = {"Business": 30, "What to say": 78, "Phone": 18, "Website": 34,
-              "Email": 28, "Ad tags found": 20, "Opening hours": 40,
+              "Email": 28, "Advertising tags installed": 24, "Opening hours": 40,
               "Instagram": 30, "Facebook": 30,
               "TikTok": 30, "Status": 16}
 

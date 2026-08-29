@@ -7,8 +7,8 @@ the call. No browser, no network, so the test suite can check every rule.
 THE IDEAL CUSTOMER PROFILE
 A firm is a good lead when all three are true:
   1. Quiet          -- few Google reviews, so they lack organic reach.
-  2. Invests to be seen -- a live advertisement tag, or content on Instagram
-                        or TikTok.
+  2. Invests to be seen -- advertising infrastructure, or content on
+                          Instagram or TikTok.
   3. Broken funnel  -- no way to capture a lead, a slow site, no HTTPS, or no
                        site at all.
 A firm with a large following is not a lead. They already own an audience.
@@ -24,7 +24,7 @@ states only what the scan actually found.
 import config
 
 # Tier names, best first.
-TIER_HOT = "hot"        # Confirmed advertisement spend and a leaking funnel.
+TIER_HOT = "hot"        # Advertising infrastructure and a leaking funnel.
 TIER_WARM = "warm"      # Organic social effort and a leaking funnel.
 TIER_COOL = "cool"      # Quiet firm with a real defect, but no proof of effort.
 
@@ -76,17 +76,17 @@ def _channel_story(findings, follower_count):
     Give back (points, tier, opening clause, leak clause).
 
     Only three honest stories are possible:
-      * an advertisement tag is present -> they buy traffic
+      * an advertisement tag is present -> name the installed tag
       * Instagram or TikTok is present  -> they build an audience
       * neither                         -> say nothing about marketing
     """
-    if findings.get("spends_on_ads"):
-        tags = findings.get("ad_tags") or ["an ad tag"]
+    if findings.get("has_ad_tags"):
+        tag = (findings.get("ad_tags") or ["Advertising-related tag"])[0]
         return (
             15,
             TIER_HOT,
-            f"You are running paid ads. I can see the {tags[0]} on your site",
-            "that paid traffic has nowhere to convert",
+            f"{tag} is installed on your site",
+            "people who arrive on the page have no clear next step",
         )
 
     if findings.get("markets_on_social"):
@@ -230,7 +230,7 @@ def score_website_lead(findings, review_count, follower_count=None, error=None):
     # Warm means the call is worth making: there is a real defect AND some sign
     # that the firm invests in being seen or is small enough to need help.
     warm = bool(pains) and (
-        findings.get("spends_on_ads")
+        findings.get("has_ad_tags")
         or findings.get("markets_on_social")
         or (review_count is not None and review_count <= config.QUIET_REVIEWS)
     )

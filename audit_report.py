@@ -124,8 +124,8 @@ def _working(row, findings):
                      + ", ".join(capture) + ".")
     tags = findings.get("ad_tags") or []
     if tags:
-        items.append("You are already investing in being found. I can see "
-                     + " and ".join(tags) + " on the page.")
+        items.append("Advertising-related site infrastructure is installed: "
+                     + " and ".join(tags) + ".")
     if findings.get("instagram") or findings.get("tiktok"):
         where = " and ".join(
             name for name, link in (("Instagram", findings.get("instagram")),
@@ -254,11 +254,10 @@ def _lede(problem_count, findings):
     thing = "these" if problem_count > 1 else "this"
     if tags:
         return (f"I had a look at your website from a customer's point of view. "
-                f"You are already paying to bring people to it — I can see "
-                f"{' and '.join(tags)} on the page — so {thing} "
-                f"{'are' if problem_count > 1 else 'is'} costing you money "
-                f"every day {'they stay' if problem_count > 1 else 'it stays'} "
-                f"in place.")
+                f"I found {' and '.join(tags)} installed on the page. That does "
+                f"not show whether a campaign is live; {thing} "
+                f"{'are' if problem_count > 1 else 'is'} the first "
+                f"{'problems' if problem_count > 1 else 'problem'} I would fix.")
     if findings.get("instagram") or findings.get("tiktok"):
         return ("I had a look at your website from a customer's point of view. "
                 "You are putting real work into your social accounts, so the "

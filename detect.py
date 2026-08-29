@@ -8,17 +8,18 @@ the logic without a browser.
 Three questions get answered:
 
   1. Can this business capture a lead?  (a form, a booking tool, a tel: link)
-  2. Do they pay for advertisements?    (an advertisement tag, not analytics)
+  2. Is advertising infrastructure installed? (an ad tag, not analytics)
   3. Which social profiles do they own? (a real profile, not a platform page)
 
 WHY THE ADVERTISEMENT TEST CHANGED
-The earlier version counted Google Analytics as proof of advertisement spend.
+The earlier version counted Google Analytics as advertising infrastructure.
 Almost every website has Google Analytics, so almost every lead became "hot"
 and the tier meant nothing. Analytics shows that somebody measures traffic. It
-does not show that somebody buys traffic. This module separates the two:
+does not show that advertising infrastructure is installed. This module
+separates the two, while neither signal proves that a campaign is live:
 
-  * AD_PROOF      -- a conversion or retargeting tag. Money is going out.
-  * ANALYTICS_ONLY-- a measurement tag. It proves nothing about spend.
+  * AD_TAG        -- a conversion or retargeting tag is installed.
+  * ANALYTICS_ONLY-- a measurement tag, not advertising evidence.
 
 The clearest single signal is the Google tag prefix. "AW-" is a Google Ads
 conversion identifier. "G-" is a Google Analytics 4 identifier. They look
@@ -31,12 +32,12 @@ import urllib.parse
 from bs4 import BeautifulSoup
 
 # ---------------------------------------------------------------------------
-# Advertisement proof
+# Advertising-related infrastructure
 # ---------------------------------------------------------------------------
-# Each entry is (label, regular expression). A match is proof that the business
-# runs paid advertisements, or at least pays to retarget people.
+# Each entry is (label, regular expression). A match proves only that the tag is
+# installed. It does not prove that an advertising campaign is currently live.
 
-AD_PROOF_PATTERNS = [
+AD_TAG_PATTERNS = [
     ("Meta Pixel", re.compile(r"fbq\s*\(\s*['\"]init['\"]", re.I)),
     ("Meta Pixel", re.compile(r"connect\.facebook\.net/[^\"'\s]*/fbevents\.js", re.I)),
     ("Meta Pixel", re.compile(r"facebook\.com/tr\?[^\"'\s]*id=\d", re.I)),
@@ -54,7 +55,7 @@ AD_PROOF_PATTERNS = [
     ("Snap Pixel", re.compile(r"sc-static\.net/scevent", re.I)),
 ]
 
-# Measurement only. Never proof of spend.
+# Measurement only. Never advertising evidence.
 ANALYTICS_PATTERNS = [
     ("Google Analytics 4", re.compile(r"\bG-[A-Z0-9]{6,}\b")),
     ("Google Analytics", re.compile(r"\bUA-\d{4,}-\d+\b")),
@@ -67,7 +68,7 @@ ANALYTICS_PATTERNS = [
 
 def find_ad_tags(html):
     """Give back the sorted list of advertisement tags found in the page."""
-    return _match_labels(html, AD_PROOF_PATTERNS)
+    return _match_labels(html, AD_TAG_PATTERNS)
 
 
 def find_analytics_tags(html):
@@ -422,9 +423,10 @@ def analyze(html, final_url, load_seconds, slow_seconds=5.0):
         "contact_links": find_contact_links(soup, final_url or ""),
         "capture_methods": capture_methods,
         "can_capture_lead": bool(capture_methods),
-        # Only a real advertisement tag counts as spend.
+        # Record exactly what is present. An installed tag is not proof that a
+        # campaign is currently live.
         "ad_tags": ad_tags,
-        "spends_on_ads": bool(ad_tags),
+        "has_ad_tags": bool(ad_tags),
         # Analytics is kept for context. It never raises the tier.
         "analytics_tags": analytics_tags,
         "measures_only": bool(analytics_tags) and not ad_tags,
@@ -486,8 +488,8 @@ def merge_second_page(home, extra):
     for key in ("ad_tags", "analytics_tags"):
         if extra.get(key):
             merged[key] = sorted(set(list(home.get(key) or []) + extra[key]))
-    merged["spends_on_ads"] = bool(merged.get("ad_tags"))
-    merged["measures_only"] = bool(merged.get("analytics_tags")) and not merged["spends_on_ads"]
+    merged["has_ad_tags"] = bool(merged.get("ad_tags"))
+    merged["measures_only"] = bool(merged.get("analytics_tags")) and not merged["has_ad_tags"]
 
     for network, link in (extra.get("socials") or {}).items():
         if not merged.get(network):

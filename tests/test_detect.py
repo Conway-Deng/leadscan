@@ -14,30 +14,30 @@ def page(body, head=""):
 
 
 # ---------------------------------------------------------------------------
-# Advertisement proof: the change that matters most
+# Advertising infrastructure: distinct from analytics and live-campaign proof
 # ---------------------------------------------------------------------------
 
-def test_google_analytics_alone_is_not_ad_spend():
+def test_google_analytics_alone_is_not_advertising_infrastructure():
     """The old version called this an ad-spender. Almost every site has GA."""
     html = page("", head="<script src='https://www.googletagmanager.com/gtag/js?id=G-ABC1234567'></script>")
     assert detect.find_ad_tags(html) == []
     assert detect.find_analytics_tags(html)
-    assert detect.analyze(html, "https://x.test", 1.0)["spends_on_ads"] is False
+    assert detect.analyze(html, "https://x.test", 1.0)["has_ad_tags"] is False
 
 
-def test_google_ads_conversion_tag_is_ad_spend():
-    """AW- is a Google Ads id. It looks like G- but means real spend."""
+def test_google_ads_conversion_tag_is_advertising_infrastructure():
+    """AW- is a Google Ads id. It looks like G- but is not analytics."""
     html = page("", head="<script src='https://www.googletagmanager.com/gtag/js?id=AW-123456789'></script>")
     assert "Google Ads tag" in detect.find_ad_tags(html)
-    assert detect.analyze(html, "https://x.test", 1.0)["spends_on_ads"] is True
+    assert detect.analyze(html, "https://x.test", 1.0)["has_ad_tags"] is True
 
 
-def test_meta_pixel_is_ad_spend():
+def test_meta_pixel_is_advertising_infrastructure():
     html = page("", head="<script>fbq('init', '1234567890');</script>")
     assert "Meta Pixel" in detect.find_ad_tags(html)
 
 
-def test_tiktok_pixel_is_ad_spend():
+def test_tiktok_pixel_is_advertising_infrastructure():
     html = page("", head="<script>ttq.load('CABC123');</script>")
     assert "TikTok Pixel" in detect.find_ad_tags(html)
 
@@ -172,7 +172,7 @@ def test_analyze_on_a_broken_funnel_site():
     )
     findings = detect.analyze(html, "http://quiet.test", 7.4, slow_seconds=5.0)
     assert findings["can_capture_lead"] is False
-    assert findings["spends_on_ads"] is True
+    assert findings["has_ad_tags"] is True
     assert findings["markets_on_social"] is True
     assert findings["has_mobile_viewport"] is False
     assert findings["is_https"] is False

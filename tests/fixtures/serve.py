@@ -15,7 +15,7 @@ Then, in another terminal:
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-# 1. The perfect lead: a live Meta Pixel and a Google Ads tag, an Instagram
+# 1. The perfect lead: a Meta Pixel and Google Ads tag are installed, Instagram
 #    account, no form, no phone link, no viewport, and a slow-looking page.
 HOT = """<!doctype html><html><head><title>Quiet Interiors</title>
 <script>!function(f,b,e,v,n,t,s){f.fbq=n}(window);fbq('init','101010101010');</script>
@@ -38,7 +38,7 @@ WARM = """<!doctype html><html><head><title>Studio Lumen</title>
 </body></html>"""
 
 # 3. Analytics only, and it has a real contact form. The old version called
-#    this a HOT confirmed ad-spender. It is neither hot nor a lead.
+#    this HOT. It is neither hot nor a lead because analytics is not ad evidence.
 SOLID = """<!doctype html><html><head><title>Northline Design</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="https://www.googletagmanager.com/gtag/js?id=G-ABCDE12345"></script>

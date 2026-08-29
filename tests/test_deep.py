@@ -101,15 +101,15 @@ def test_a_form_on_the_contact_page_clears_the_biggest_pain():
 
 def test_a_second_page_can_only_add_evidence():
     """A contact page without a pixel does not mean the home page had none."""
-    home = home_findings(ad_tags=["Meta Pixel"], spends_on_ads=True)
+    home = home_findings(ad_tags=["Meta Pixel"], has_ad_tags=True)
     merged = detect.merge_second_page(
         home, detect.read_second_page("<p>nothing here</p>", "https://studio.sg/contact"))
-    assert merged["spends_on_ads"] is True
+    assert merged["has_ad_tags"] is True
     assert merged["ad_tags"] == ["Meta Pixel"]
 
 
 def test_speed_and_https_stay_as_measured_on_the_home_page():
-    """The advertisement sends people to the home page, so that page is judged."""
+    """The home page is the landing page, so that page is judged."""
     home = home_findings(is_slow=True, load_seconds=9.0, is_https=False)
     merged = detect.merge_second_page(
         home, detect.read_second_page("<p>fast</p>", "https://studio.sg/contact"))

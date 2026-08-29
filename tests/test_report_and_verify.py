@@ -50,7 +50,8 @@ def test_no_ad_tag_means_no_mention_of_ad_spend():
 def test_an_ad_tag_is_named_and_only_then():
     page = audit_report.build(row(), findings(ad_tags=["Meta Pixel"]), BRAND)
     assert "Meta Pixel" in page
-    assert "paying to bring people" in page
+    assert "installed" in page
+    assert "paying to bring people" not in page
 
 
 def test_the_scope_section_is_always_present():

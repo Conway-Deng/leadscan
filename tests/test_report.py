@@ -14,7 +14,7 @@ import scoring  # noqa: E402
 
 def lead(name="Alpha", tier="hot", score=80, phone="+65 6123 4567", **extra):
     row = {"name": name, "tier": tier, "score": score, "phone": phone,
-           "hook": "You are running paid ads.", "warm": True,
+           "hook": "A Meta Pixel is installed on your site.", "warm": True,
            "disqualified": False, "website": "https://alpha.sg",
            "instagram": "", "facebook": "", "tiktok": "", "email": "",
            "review_count": 12, "rating": 4.5, "instagram_followers": None,

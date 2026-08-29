@@ -28,17 +28,20 @@ Disqualify a firm with a large following. They own an audience already.
 
 `spends_on_ads` was `has_meta_pixel or has_google_tag`, and `has_google_tag`
 matched `gtag(`, `googletagmanager.com` and `google-analytics.com`. Almost every
-website has one of those. The result: most leads were marked "hot confirmed
-ad-spender" on the strength of a Google Analytics tag, and the caller opened
-with "you are running paid ads" to a firm that has never bought one.
+website has one of those. The result: most leads were marked as confirmed
+advertisers on the strength of a Google Analytics tag, and the caller opened
+with an unsupported active-campaign claim.
 
 Now `detect.py` separates the two:
 
-* **Advertisement proof** — Meta Pixel `fbq('init')`, `fbevents.js`, the
+* **Advertising infrastructure** — Meta Pixel `fbq('init')`, `fbevents.js`, the
   `/tr?id=` image, Google Ads `AW-`, `google_conversion_id`,
   `googleadservices.com`, TikTok, LinkedIn, Microsoft, Pinterest, Snap, X.
 * **Measurement only** — GA4 `G-`, Universal `UA-`, GTM `gtm.js`, Hotjar,
-  Clarity. Recorded in `reasons`, never counted as spend.
+  Clarity. Recorded in `reasons`, never counted as advertising evidence.
+
+An installed advertising tag does not prove that a campaign is currently live.
+LeadScan names the tag it observed and makes no claim about current spend.
 
 The clearest single signal is the Google tag prefix. `AW-` is Google Ads.
 `G-` is Analytics. They look nearly identical in the page source and mean
@@ -216,10 +219,10 @@ findings.
 
 In the Google Maps lead-tool category, **ad pixel detection is offered by
 nobody**, and website technology detection by nobody either. Those tools
-compete on volume of rows and on email enrichment. LeadScan's whole premise —
-"this firm is provably paying for traffic AND cannot capture it" — is not
-something any of them can answer. That is the thing to lead with, and it is now
-stated plainly in the README rather than buried in the scoring table.
+compete on volume of rows and on email enrichment. LeadScan's differentiator is
+that it can identify installed advertising infrastructure alongside a broken
+funnel. It states exactly which tag it saw; whether a campaign is currently
+live still requires a separate evidence source.
 
 ### Finding 2 — every audit tool sells a report; LeadScan had none (FIXED)
 

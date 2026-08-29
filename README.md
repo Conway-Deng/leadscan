@@ -43,7 +43,7 @@ Three files, side by side:
 A lead is good when all three of these are true:
 
 1. **Quiet** — few Google reviews, so the firm has little organic reach.
-2. **Invests in being seen** — a live advertisement tag, or content on
+2. **Invests in being seen** — an advertising-related tag, or content on
    Instagram or TikTok.
 3. **Broken funnel** — no way to capture a lead, a slow site, no HTTPS, or no
    website at all.
@@ -54,7 +54,7 @@ A firm with a large social following is skipped. It already owns an audience.
 
 | Tier | Meaning |
 |---|---|
-| `hot` | A real advertisement tag was found AND the funnel leaks. Money goes out every day this stays broken. |
+| `hot` | An advertising-related tag was found AND the funnel leaks. The tag proves installed infrastructure, not a currently active campaign. |
 | `warm` | The firm builds an audience on Instagram or TikTok AND the funnel leaks. |
 | `cool` | A quiet firm with a real defect, but no proof that it markets itself. Hidden unless you pass `--include-cool`. |
 
@@ -64,7 +64,7 @@ A firm with a large social following is skipped. It already owns an audience.
 |---|---|---|
 | No form, booking link, WhatsApp link or click-to-call | Cannot capture a lead | +40 |
 | Quiet (30 reviews or fewer) | Small firm, likely needs help | +20 |
-| Advertisement tag found | Proven spend | +15 |
+| Advertisement tag found | Advertising infrastructure installed | +15 |
 | No mobile viewport | Loses phone traffic | +15 |
 | Slow (over 5 s) | Loses clicks | +15 |
 | Instagram or TikTok, no advertisement tag | Organic effort | +10 |
@@ -80,7 +80,8 @@ LEADSCAN_QUIET_REVIEWS=20 python leadscan.py --sweep sg-car
 
 ### What counts as an advertisement tag
 
-Only a tag that shows money is being spent:
+These tags show that advertising-related infrastructure is installed. They do
+not prove that a campaign is currently active:
 
 * Meta Pixel (`fbq('init', ...)`, `fbevents.js`, the `/tr?id=` image)
 * Google Ads (`AW-...`, `google_conversion_id`, `googleadservices.com`)
@@ -239,10 +240,11 @@ python tests/fixtures/serve.py 8099 &
 python leadscan.py --input tests/fixtures/fixture_businesses.csv --include-cool
 ```
 
-The fixture site holds six cases with known answers: a confirmed advertiser
-with no funnel (hot), an Instagram-only firm (warm), a firm with analytics and
-a working form (not a lead), a page full of footer noise that must not produce a
-fake social profile, a firm whose form is on `/contact` (which must not be
+The fixture site holds six cases with known answers: a site with advertising
+infrastructure installed and no funnel (hot), an Instagram-only firm (warm), a
+firm with analytics and a working form (not a lead), a page full of footer
+noise that must not produce a fake social profile, a firm whose form is on
+`/contact` (which must not be
 reported as broken), and a parked domain.
 
 ## Files

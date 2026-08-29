@@ -16,7 +16,7 @@ def findings(**overrides):
         "is_https": True,
         "is_slow": False,
         "load_seconds": 1.0,
-        "spends_on_ads": False,
+        "has_ad_tags": False,
         "ad_tags": [],
         "analytics_tags": [],
         "measures_only": False,
@@ -32,7 +32,7 @@ def findings(**overrides):
 # The honesty rule
 # ---------------------------------------------------------------------------
 
-def test_no_ad_proof_means_no_claim_about_ads():
+def test_no_ad_tag_means_no_claim_about_ads():
     """The old hook told every firm 'You may be spending on ads'. That is a guess."""
     result = scoring.score_website_lead(findings(can_capture_lead=False), 12)
     assert "ads" not in result["hook"].lower()
@@ -40,11 +40,13 @@ def test_no_ad_proof_means_no_claim_about_ads():
     assert result["tier"] == scoring.TIER_COOL
 
 
-def test_ad_proof_names_the_tag_that_was_seen():
+def test_installed_ad_tag_names_exactly_what_was_seen():
     result = scoring.score_website_lead(
-        findings(can_capture_lead=False, spends_on_ads=True, ad_tags=["Meta Pixel"]), 12
+        findings(can_capture_lead=False, has_ad_tags=True, ad_tags=["Meta Pixel"]), 12
     )
     assert "Meta Pixel" in result["hook"]
+    assert "installed" in result["hook"]
+    assert "running paid ads" not in result["hook"].lower()
     assert result["tier"] == scoring.TIER_HOT
 
 
@@ -98,7 +100,7 @@ def test_no_website_never_claims_ad_spend():
 
 def test_solid_funnel_is_not_a_lead():
     result = scoring.score_website_lead(
-        findings(spends_on_ads=True, ad_tags=["Meta Pixel"]), 10
+        findings(has_ad_tags=True, ad_tags=["Meta Pixel"]), 10
     )
     assert result["warm"] is False
     assert result["tier"] == ""
@@ -120,7 +122,7 @@ def test_score_is_capped_between_zero_and_one_hundred():
     result = scoring.score_website_lead(
         findings(can_capture_lead=False, has_mobile_viewport=False,
                  is_https=False, is_slow=True, load_seconds=12.0,
-                 spends_on_ads=True, ad_tags=["Meta Pixel"]), 1
+                 has_ad_tags=True, ad_tags=["Meta Pixel"]), 1
     )
     assert 0 <= result["score"] <= 100
 
@@ -181,9 +183,9 @@ def test_the_consequence_matches_the_defect_that_is_named():
 
 def test_the_capture_defect_uses_the_channel_consequence():
     result = scoring.score_website_lead(
-        findings(can_capture_lead=False, spends_on_ads=True, ad_tags=["Meta Pixel"]), 12
+        findings(can_capture_lead=False, has_ad_tags=True, ad_tags=["Meta Pixel"]), 12
     )
-    assert "paid traffic has nowhere to convert" in result["hook"]
+    assert "people who arrive on the page have no clear next step" in result["hook"]
 
 
 def test_a_slow_page_says_so():
