@@ -46,3 +46,7 @@ out/
 # Run journals (hold scraped phone numbers -- keep private)
 *.journal.jsonl
 *.jsonl
+
+# Generated private lead/report output
+/reports/
+/crm_import.csv
