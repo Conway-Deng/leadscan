@@ -7,6 +7,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import audit_report  # noqa: E402
+import checks  # noqa: E402
 import detect  # noqa: E402
 import outreach  # noqa: E402
 import report  # noqa: E402
@@ -76,6 +77,48 @@ def test_page_without_ad_tag_produces_no_advertising_claim():
     result = scoring.score_website_lead(findings, 12)
     assert "advertis" not in result["hook"].lower()
     assert_no_live_campaign_claim(result["hook"])
+
+
+def test_legacy_cached_tag_findings_score_like_fresh_findings():
+    fresh = detect.analyze(
+        page("<script>fbq('init', '1234567890')</script>"),
+        "https://studio.test", 1.0)
+    legacy = dict(fresh)
+    legacy["spends_on_ads"] = legacy.pop("has_ad_tags")
+
+    class LegacyRenderCache:
+        def get(self, namespace, key):
+            assert namespace == "render"
+            assert key == "https://studio.test"
+            return {"findings": legacy, "error": None,
+                    "final_url": "https://studio.test"}
+
+    class BrowserMustNotRun:
+        def render(self, _url):
+            raise AssertionError("a cache hit must not render the site")
+
+    cached, error, final_url = checks._render_and_detect(
+        BrowserMustNotRun(), "https://studio.test", LegacyRenderCache())
+    assert error is None
+    assert final_url == "https://studio.test"
+    assert cached["has_ad_tags"] is True
+    assert "has_ad_tags" not in legacy
+
+    cached_result = scoring.score_website_lead(cached, 12)
+    fresh_result = scoring.score_website_lead(fresh, 12)
+    assert fresh_result["score"] == 75
+    assert fresh_result["tier"] == scoring.TIER_HOT
+    assert fresh_result["warm"] is True
+    fields = ("score", "tier", "warm", "hook")
+    assert {key: cached_result[key] for key in fields} == {
+        key: fresh_result[key] for key in fields
+    }
+    assert "Meta Pixel is installed" in cached_result["hook"]
+    assert_no_live_campaign_claim(cached_result["hook"])
+
+    unsupported_claim_only = checks._normalise_cached_render_findings(
+        {"spends_on_ads": True, "ad_tags": []})
+    assert unsupported_claim_only["has_ad_tags"] is False
 
 
 def test_every_generated_surface_uses_evidence_accurate_tag_wording(tmp_path):

@@ -106,7 +106,8 @@ def _render_and_detect(browser, website, cache):
 
     cached = cache.get("render", website) if cache else None
     if cached is not None:
-        return cached.get("findings"), cached.get("error"), cached.get("final_url", "")
+        findings = _normalise_cached_render_findings(cached.get("findings"))
+        return findings, cached.get("error"), cached.get("final_url", "")
 
     html, final_url, load_seconds, error = browser.render(website)
     findings = None
@@ -117,6 +118,17 @@ def _render_and_detect(browser, website, cache):
         cache.put("render", website,
                   {"findings": findings, "error": error, "final_url": final_url})
     return findings, error, final_url
+
+
+def _normalise_cached_render_findings(findings):
+    """Bring cached findings forward without changing or deleting the cache."""
+    if not isinstance(findings, dict) or "has_ad_tags" in findings:
+        return findings
+    normalised = dict(findings)
+    # Legacy caches called this signal `spends_on_ads`. Ignore that inferred
+    # claim and derive the new evidence field from the tags actually observed.
+    normalised["has_ad_tags"] = bool(normalised.get("ad_tags"))
+    return normalised
 
 
 def _check_contact_pages(browser, findings, cache, limit=2):
