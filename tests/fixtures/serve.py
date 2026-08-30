@@ -1,7 +1,7 @@
 """
 tests/fixtures/serve.py
 -----------------------
-A tiny local website that imitates four real Singapore small-business sites.
+A tiny local website that imitates several real Singapore small-business sites.
 It lets the whole pipeline be run end to end with no internet access and no
 Google Places key, so the scoring can be checked against a known answer.
 
@@ -107,10 +107,28 @@ PARKED = """<!doctype html><html><head><title>coolbreeze.sg</title></head><body>
 <p>This domain is for sale. Buy this domain and start your project today.</p>
 </body></html>"""
 
+# Browser integration fixture. The response contains no form element; real
+# JavaScript execution is required to add the lead-capture form to the DOM.
+JAVASCRIPT = """<!doctype html><html><head><title>JavaScript Capture</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"></head><body>
+<h1>JavaScript Capture Studio</h1>
+<p>Appointments for local homeowners.</p>
+<div id="capture-root"></div>
+<script>
+const form = document.createElement("form");
+form.action = "/javascript/enquiry";
+const email = document.createElement("input");
+email.type = "email";
+email.name = "email";
+form.appendChild(email);
+document.getElementById("capture-root").appendChild(form);
+</script>
+</body></html>"""
+
 PAGES = {"/hot": HOT, "/warm": WARM, "/solid": SOLID, "/noise": NOISE,
          "/deep": DEEP_HOME, "/deep/contact": DEEP_CONTACT,
          "/deep/about": DEEP_HOME, "/deep/privacy": DEEP_PRIVACY,
-         "/parked": PARKED}
+         "/parked": PARKED, "/javascript": JAVASCRIPT}
 
 
 class Handler(BaseHTTPRequestHandler):
