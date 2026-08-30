@@ -22,7 +22,8 @@ import scoring
 
 CSV_FIELDS = [
     "tier", "score", "name", "phone", "email", "review_count", "rating",
-    "instagram_followers", "email_grade", "ad_tags", "capture_methods", "hook",
+    "instagram_followers", "email_grade", "ad_tags", "capture_methods",
+    "pages_checked", "hook",
     "website", "instagram", "facebook", "tiktok", "address", "opening_hours",
     "reasons", "status", "whatsapp_message", "email_subject", "email_body",
 ]

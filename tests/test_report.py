@@ -53,6 +53,17 @@ def test_csv_output_neutralises_a_formula_name(tmp_path):
     assert rows[0]["name"].startswith("'=")
 
 
+def test_csv_output_persists_pages_checked(tmp_path):
+    path = str(tmp_path / "out.csv")
+    pages = "https://studio.sg/quote | https://studio.sg/contact"
+    report.write_csv([lead(pages_checked=pages)], path)
+    with open(path, newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle)
+        assert "pages_checked" in reader.fieldnames
+        rows = list(reader)
+    assert rows[0]["pages_checked"] == pages
+
+
 # ---------------------------------------------------------------------------
 # Lead selection and ordering
 # ---------------------------------------------------------------------------

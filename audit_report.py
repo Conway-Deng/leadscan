@@ -65,46 +65,43 @@ def _problems(row, findings):
         items.append((
             "There is no way to contact you from the page",
             "I could not find a form, a booking link, a WhatsApp link, or a "
-            "phone number you can tap. Somebody who is ready to buy has to "
-            "stop, open another tab and search for you again. Most do not.",
-            "Add one clear action, repeated at the top and the bottom of the "
-            "page. For most firms here, a WhatsApp button works better than a "
-            "form.",
+            "phone number you can tap. A visitor cannot contact you directly "
+            "from this page using those capture methods.",
+            "Add one clear contact action, placed prominently at the top and "
+            "bottom of the page, such as a direct WhatsApp button or simple form.",
         ))
     if findings.get("is_parked"):
         items.append((
             "Your web address does not open a working website",
-            "The address shows a holding page rather than your business. "
-            "Anyone who looks you up finds nothing and moves to the next firm.",
-            "Point the address at a real page. Even one page with your work, "
-            "your area and a way to reach you is a large improvement.",
+            "The address currently displays a holding or parked domain page "
+            "rather than an active website for your business.",
+            "Point the domain at a working website with your services, "
+            "location, and contact details.",
         ))
     if not findings.get("has_mobile_viewport", True):
         items.append((
             "The site is not set up for a phone screen",
-            "The page is built at desktop width, so on a phone the text is "
-            "small and buttons are hard to press. Most people who find a local "
-            "business are on a phone.",
-            "Add a mobile layout. Any modern template does this; the fix is "
-            "usually a setting, not a rebuild.",
+            "The page is built at desktop width without a mobile viewport "
+            "configuration, so on mobile devices text can appear small and "
+            "buttons can be harder to tap.",
+            "Configure a responsive mobile viewport in your website template, "
+            "platform settings, or with your web developer.",
         ))
     if findings.get("is_slow"):
         items.append((
             f"The page took {findings.get('load_seconds')} seconds to appear",
-            "That is long enough that a large share of visitors leave before "
-            "they see anything. On a phone connection it is worse.",
-            "Compress the images first. On most small-business sites the "
-            "photographs are the whole problem, and that one change usually "
-            "halves the load time.",
+            "That measured load time is slow, which can make the site harder "
+            "to use, especially on a mobile data connection.",
+            "Investigate common causes of slow loading, such as uncompressed "
+            "images, heavy scripts, or server response times.",
         ))
     if not findings.get("is_https", True):
         items.append((
             "There is no padlock in the address bar",
-            "Browsers show a 'Not secure' warning on pages without one. A "
-            "visitor sees that warning before they read a single word about "
-            "your work.",
-            "Turn on a security certificate. Every host offers one free, and "
-            "it usually takes minutes.",
+            "Browsers show a 'Not secure' warning on pages without one, which "
+            "visitors see when accessing the site.",
+            "Enable an SSL/TLS certificate (HTTPS) through your hosting "
+            "provider, domain registrar, or web developer.",
         ))
     return items
 
@@ -130,10 +127,10 @@ def _working(row, findings):
         where = " and ".join(
             name for name, link in (("Instagram", findings.get("instagram")),
                                     ("TikTok", findings.get("tiktok"))) if link)
-        items.append(f"You are building an audience on {where}.")
+        items.append(f"Your website links to your {where} profile.")
     if row.get("review_count"):
-        items.append(f"You have {row['review_count']} Google reviews, which is "
-                     f"the hardest thing on this list to buy.")
+        items.append(f"You have {row['review_count']} Google reviews, showing an "
+                     f"established public track record.")
     return items
 
 
@@ -145,9 +142,17 @@ def _not_checked(findings):
     this report survives being forwarded to the prospect's web developer.
     """
     pages = findings.get("pages_checked") or []
+    if not pages:
+        opened = "Only the home page was opened. The rest of the site was not read."
+    elif len(pages) == 1:
+        opened = f"Only the home page and {pages[0]} were opened. The rest of the site was not read."
+    elif len(pages) == 2:
+        opened = f"Only the home page, {pages[0]} and {pages[1]} were opened. The rest of the site was not read."
+    else:
+        opened = "Only the home page, " + ", ".join(pages[:-1]) + f" and {pages[-1]} were opened. The rest of the site was not read."
+
     lines = [
-        "Only the home page" + (" and the contact page" if pages else "")
-        + " was opened. The rest of the site was not read.",
+        opened,
         "Search rankings, keywords and backlinks were not measured.",
         "Nothing was checked inside your advertising accounts. Whether an "
         "advert is running right now, and what it costs you, is not visible "
@@ -209,10 +214,101 @@ _PAGE = """<!doctype html>
   .foot .cta {{ font-size:15.5px; margin:0 0 8px }}
   .stamp {{ color:var(--muted); font-size:12.5px; margin-top:14px }}
   @media print {{
-    body {{ background:#fff }}
-    .sheet {{ margin:0; border:0; border-radius:0; padding:0; max-width:none }}
-    .item, .scope {{ break-inside:avoid }}
-    @page {{ margin:16mm }}
+    @page {{ size:A4; margin:10mm; }}
+
+    body {{
+      background:#fff;
+      font-size:11.5px;
+      line-height:1.32;
+    }}
+
+    .sheet {{
+      margin:0;
+      border:0;
+      border-radius:0;
+      padding:0;
+      max-width:none;
+    }}
+
+    h1 {{ font-size:19px; }}
+
+    h2 {{
+      font-size:13.5px;
+      margin:10px 0 5px;
+      break-after:avoid;
+    }}
+
+    .sub {{ font-size:11px; }}
+
+    .by {{ font-size:10.5px; }}
+
+    .by strong {{ font-size:12.5px; }}
+
+    .top {{
+      padding-bottom:7px;
+      break-inside:avoid;
+    }}
+
+    .lede {{
+      margin-top:8px;
+      padding:7px 9px;
+      break-inside:avoid;
+    }}
+
+    .item {{
+      padding:7px 9px;
+      margin-bottom:4px;
+      break-inside:avoid;
+    }}
+
+    .item h3 {{
+      margin-bottom:3px;
+      font-size:13px;
+    }}
+
+    .n {{
+      min-width:18px;
+      height:18px;
+      font-size:10px;
+    }}
+
+    .item p {{ margin-bottom:3px; }}
+
+    .fix {{
+      padding:4px 6px;
+      font-size:11.5px;
+    }}
+
+    ul.good {{ break-inside:avoid; }}
+
+    ul.good li {{
+      padding-top:2px;
+      padding-bottom:2px;
+    }}
+
+    .scope {{
+      padding:7px 9px;
+      font-size:11px;
+      break-inside:avoid;
+    }}
+
+    .scope li {{ margin:1px 0; }}
+
+    .foot {{
+      margin-top:8px;
+      padding-top:6px;
+      break-inside:avoid;
+    }}
+
+    .foot .cta {{
+      font-size:12px;
+      margin-bottom:3px;
+    }}
+
+    .stamp {{
+      margin-top:5px;
+      font-size:10.5px;
+    }}
   }}
 </style></head><body>
 <main class="sheet">
@@ -259,10 +355,12 @@ def _lede(problem_count, findings):
                 f"{'are' if problem_count > 1 else 'is'} the first "
                 f"{'problems' if problem_count > 1 else 'problem'} I would fix.")
     if findings.get("instagram") or findings.get("tiktok"):
+        where = " and ".join(
+            name for name, link in (("Instagram", findings.get("instagram")),
+                                    ("TikTok", findings.get("tiktok"))) if link)
         return ("I had a look at your website from a customer's point of view. "
-                "You are putting real work into your social accounts, so the "
-                "notes below are about what happens to the people that work "
-                "sends to your site.")
+                f"I found a link to your {where} profile, so the notes below "
+                "focus on the website experience when visitors arrive.")
     return ("I had a look at your website from a customer's point of view. "
             f"Here {'are' if problem_count > 1 else 'is'} {problem_count} "
             f"{'things' if problem_count > 1 else 'thing'} I would change "
@@ -280,7 +378,7 @@ def build(row, findings=None, brand_info=None, stamp=None):
 
     problem_html = ""
     if problems:
-        problem_html = "  <h2>What is costing you enquiries</h2>\n"
+        problem_html = "  <h2>What may be making enquiries harder</h2>\n"
         for number, (title, why, fix) in enumerate(problems, 1):
             problem_html += (
                 f'  <div class="item"><h3><span class="n">{number}</span>'
@@ -312,7 +410,13 @@ def build(row, findings=None, brand_info=None, stamp=None):
     pages = findings.get("pages_checked") or []
     pages_note = ""
     if pages:
-        pages_note = "Pages opened: the home page and " + escape(pages[0]) + "."
+        if len(pages) == 1:
+            opened_pages = "the home page and " + escape(pages[0])
+        elif len(pages) == 2:
+            opened_pages = "the home page, " + escape(pages[0]) + " and " + escape(pages[1])
+        else:
+            opened_pages = "the home page, " + ", ".join(escape(p) for p in pages[:-1]) + " and " + escape(pages[-1])
+        pages_note = f"Pages opened: {opened_pages}."
     elif row.get("website"):
         pages_note = "Page opened: the home page."
 
@@ -388,8 +492,8 @@ def row_findings(row):
     means a report can be regenerated from a saved CSV or journal without
     opening a single website again.
     """
-    def as_list(value):
-        return [part.strip() for part in (value or "").split(",") if part.strip()]
+    def as_list(value, sep=","):
+        return [part.strip() for part in (value or "").split(sep) if part.strip()]
 
     return {
         "capture_methods": as_list(row.get("capture_methods")),
@@ -401,5 +505,5 @@ def row_findings(row):
         "is_https": (row.get("website") or "").lower().startswith("https://"),
         "has_mobile_viewport": "not built for a phone" not in (row.get("reasons") or ""),
         "is_parked": "parked" in (row.get("reasons") or ""),
-        "pages_checked": [],
+        "pages_checked": as_list(row.get("pages_checked"), sep="|"),
     }

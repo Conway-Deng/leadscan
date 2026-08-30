@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bs4 import BeautifulSoup  # noqa: E402
 
+import checks  # noqa: E402
 import detect  # noqa: E402
 import compatibility  # noqa: E402
 import config  # noqa: E402
@@ -158,6 +159,40 @@ def test_merging_nothing_changes_nothing():
     home = home_findings()
     assert detect.merge_second_page(home, None) == home
     assert detect.merge_second_page(home, {}) == home
+
+
+def test_flat_row_preserves_pages_checked():
+    class PageBrowser:
+        def __init__(self, pages):
+            self.pages = pages
+
+        def render(self, url):
+            return self.pages.get(url, ""), url, 1.0, None
+
+        def followers(self, _url):
+            return None
+
+    # Case A: no second page opened
+    browser_a = PageBrowser({"https://studio.sg": "<form><button>Send</button></form>"})
+    row_a = checks.audit_business(browser_a, {"name": "Studio", "website": "https://studio.sg"})
+    assert row_a["pages_checked"] == ""
+
+    # Case B: one additional page opened
+    browser_b = PageBrowser({
+        "https://studio.sg": "<a href='/contact'>Contact</a>",
+        "https://studio.sg/contact": "<form><button>Send</button></form>",
+    })
+    row_b = checks.audit_business(browser_b, {"name": "Studio", "website": "https://studio.sg"})
+    assert row_b["pages_checked"] == "https://studio.sg/contact"
+
+    # Case C: two additional pages opened
+    browser_c = PageBrowser({
+        "https://studio.sg": "<a href='/quote'>Quote</a> <a href='/contact'>Contact</a>",
+        "https://studio.sg/quote": "<p>Pricing details</p>",
+        "https://studio.sg/contact": "<form><button>Send</button></form>",
+    })
+    row_c = checks.audit_business(browser_c, {"name": "Studio", "website": "https://studio.sg"})
+    assert row_c["pages_checked"] == "https://studio.sg/quote | https://studio.sg/contact"
 
 
 # ---------------------------------------------------------------------------

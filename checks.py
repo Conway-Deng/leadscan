@@ -230,6 +230,7 @@ def _row(business, findings, verdict, follower_count, status, final_url):
         "email_grade": best_email.get("grade", "") if best_email else "",
         "ad_tags": ", ".join(findings.get("ad_tags", [])),
         "capture_methods": ", ".join(findings.get("capture_methods", [])),
+        "pages_checked": " | ".join(findings.get("pages_checked") or []),
         "load_seconds": findings.get("load_seconds"),
         "hook": verdict["hook"],
         "reasons": "; ".join(verdict.get("reasons", [])),

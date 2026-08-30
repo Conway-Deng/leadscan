@@ -70,6 +70,57 @@ def test_a_working_site_is_told_so_rather_than_scared():
     )
     assert "did not find anything obviously getting in the way" in page
     assert "What is costing you enquiries" not in page
+    assert "What may be making enquiries harder" not in page
+
+
+def test_no_unsupported_visitor_behavior_claims_on_missing_capture():
+    page = audit_report.build(row(), findings(capture_methods=[]), BRAND)
+    assert "Most do not" not in page
+    assert "cannot contact you directly from this page" in page
+
+
+def test_slow_page_does_not_claim_measured_abandonment_or_guaranteed_halving():
+    page = audit_report.build(
+        row(),
+        findings(is_slow=True, load_seconds=8.2),
+        BRAND,
+    )
+    assert "leave before they see anything" not in page
+    assert "large share of visitors" not in page
+    assert "halves the load time" not in page
+    assert "photographs are the whole problem" not in page
+    assert "That measured load time is slow" in page
+
+
+def test_https_recommendation_does_not_claim_every_host_free_or_instant():
+    page = audit_report.build(row(), findings(is_https=False), BRAND)
+    assert "Every host offers one free" not in page
+    assert "usually takes minutes" not in page
+    assert "Enable an SSL/TLS certificate" in page
+
+
+def test_problem_heading_is_not_causal_costing_enquiries():
+    page = audit_report.build(row(), findings(capture_methods=[]), BRAND)
+    assert "What is costing you enquiries" not in page
+    assert "What may be making enquiries harder" in page
+
+
+def test_social_links_do_not_claim_active_effort_or_audience_growth():
+    page = audit_report.build(
+        row(),
+        findings(instagram="https://instagram.com/firm", tiktok="https://tiktok.com/@firm"),
+        BRAND,
+    )
+    assert "putting real work into your social accounts" not in page
+    assert "building an audience on" not in page
+    assert "Your website links to your Instagram and TikTok profile." in page
+
+
+def test_mobile_viewport_does_not_claim_all_templates_or_just_a_setting():
+    page = audit_report.build(row(), findings(has_mobile_viewport=False), BRAND)
+    assert "Any modern template does this" not in page
+    assert "usually a setting, not a rebuild" not in page
+    assert "Configure a responsive mobile viewport" in page
 
 
 def test_every_real_defect_gets_a_fix_not_just_a_complaint():
@@ -92,6 +143,45 @@ def test_the_good_news_is_included():
     assert "What is already working" in page
     assert "Instagram" in page
     assert "14 Google reviews" in page
+
+
+def test_pages_checked_empty_reports_only_home_page():
+    page = audit_report.build(row(), findings(pages_checked=[]), BRAND)
+    assert "Only the home page was opened." in page
+    assert "Page opened: the home page." in page
+    assert "the contact page" not in page
+
+
+def test_pages_checked_single_page_uses_actual_url_without_contact_page_assumption():
+    page = audit_report.build(
+        row(),
+        findings(pages_checked=["https://quiet.sg/get-a-quote"]),
+        BRAND,
+    )
+    assert "https://quiet.sg/get-a-quote" in page
+    assert "Only the home page and https://quiet.sg/get-a-quote were opened." in page
+    assert "Pages opened: the home page and https://quiet.sg/get-a-quote." in page
+    assert "the contact page" not in page
+
+
+def test_pages_checked_two_pages_lists_both_actual_urls():
+    page = audit_report.build(
+        row(),
+        findings(pages_checked=["https://quiet.sg/get-a-quote", "https://quiet.sg/book"]),
+        BRAND,
+    )
+    assert "https://quiet.sg/get-a-quote" in page
+    assert "https://quiet.sg/book" in page
+    assert "Only the home page, https://quiet.sg/get-a-quote and https://quiet.sg/book were opened." in page
+    assert "Pages opened: the home page, https://quiet.sg/get-a-quote and https://quiet.sg/book." in page
+    assert "the contact page" not in page
+
+
+def test_pages_checked_hostile_url_is_escaped():
+    hostile = "https://quiet.sg/<script>alert(1)</script>"
+    page = audit_report.build(row(), findings(pages_checked=[hostile]), BRAND)
+    assert "<script>alert(1)</script>" not in page
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +216,27 @@ def test_the_file_name_is_safe_on_every_system():
     assert len(audit_report.safe_filename("x" * 200)) <= 60
 
 
+def test_report_print_css_rules_and_page_break_protections():
+    page = audit_report.build(row(), findings(), BRAND)
+    assert "@media print" in page
+    assert "size: A4" in page or "size:A4" in page
+    assert "margin: 10mm" in page or "margin:10mm" in page
+    assert "break-inside:avoid" in page or "break-inside: avoid" in page
+    assert "break-after:avoid" in page or "break-after: avoid" in page
+
+
+def test_report_content_integrity_preserved_with_print_styles():
+    page = audit_report.build(
+        row(),
+        findings(capture_methods=[], is_slow=True, load_seconds=8.0),
+        BRAND,
+    )
+    assert "What this review did not check" in page
+    assert "What may be making enquiries harder" in page
+    assert "What I would do:" in page
+    assert "8.0 seconds" in page
+
+
 # ---------------------------------------------------------------------------
 # Writing a folder of reports
 # ---------------------------------------------------------------------------
@@ -155,6 +266,42 @@ def test_the_findings_ride_on_the_row_so_no_site_is_reopened(tmp_path):
     rows = [row(_findings=findings(ad_tags=["TikTok Pixel"]))]
     written = audit_report.write_reports(rows, str(tmp_path), log=lambda m: None)
     assert "TikTok Pixel" in open(written[0], encoding="utf-8").read()
+
+
+def test_row_findings_restores_empty_or_missing_pages_checked():
+    # Missing field
+    assert audit_report.row_findings({})["pages_checked"] == []
+    # Empty field
+    assert audit_report.row_findings({"pages_checked": ""})["pages_checked"] == []
+
+
+def test_row_findings_restores_single_persisted_page():
+    result = audit_report.row_findings({"pages_checked": "https://studio.sg/contact"})
+    assert result["pages_checked"] == ["https://studio.sg/contact"]
+
+
+def test_row_findings_restores_two_persisted_pages_in_order():
+    result = audit_report.row_findings(
+        {"pages_checked": "https://studio.sg/quote | https://studio.sg/contact"}
+    )
+    assert result["pages_checked"] == ["https://studio.sg/quote", "https://studio.sg/contact"]
+
+
+def test_row_findings_trims_whitespace_and_drops_empty_components():
+    result = audit_report.row_findings(
+        {"pages_checked": " https://studio.sg/quote  |  | https://studio.sg/contact "}
+    )
+    assert result["pages_checked"] == ["https://studio.sg/quote", "https://studio.sg/contact"]
+
+
+def test_end_to_end_report_reconstruction_includes_all_restored_pages():
+    r = row(pages_checked="https://studio.sg/quote | https://studio.sg/contact")
+    restored = audit_report.row_findings(r)
+    page = audit_report.build(r, restored, BRAND)
+    assert "https://studio.sg/quote" in page
+    assert "https://studio.sg/contact" in page
+    assert "Only the home page, https://studio.sg/quote and https://studio.sg/contact were opened." in page
+    assert "Pages opened: the home page, https://studio.sg/quote and https://studio.sg/contact." in page
 
 
 # ---------------------------------------------------------------------------
