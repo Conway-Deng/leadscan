@@ -15,6 +15,7 @@ given a leading apostrophe when it starts with one of those characters.
 """
 
 import csv
+import hashlib
 import html as html_module
 import os
 
@@ -86,6 +87,28 @@ def write_csv(rows, path):
     return path
 
 
+def _lead_state_key(row):
+    """
+    Produce a stable, opaque key identifying this business across runs and rankings.
+
+    Used by the call sheet so contacted state can survive re-ordering, scoring
+    changes, and filter adjustments.
+    """
+    website = (row.get("website") or "").strip().lower()
+    if website:
+        identity = f"website:{website}"
+    else:
+        phone_digits = "".join(c for c in (row.get("phone") or "") if c.isdigit())
+        if phone_digits:
+            identity = f"phone:{phone_digits}"
+        else:
+            name = " ".join((row.get("name") or "").strip().lower().split())
+            identity = f"name:{name}"
+
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+    return f"lead-{digest}"
+
+
 # ---------------------------------------------------------------------------
 # The HTML call sheet
 # ---------------------------------------------------------------------------
@@ -99,55 +122,59 @@ _PAGE = """<!doctype html>
   :root {{ color-scheme: light dark;
     --bg:#f6f7f9; --card:#fff; --ink:#16181d; --muted:#5c6472; --line:#e3e6ec;
     --hot:#c2410c; --hotbg:#fff2e8; --warm:#a16207; --warmbg:#fef6e0;
-    --cool:#3f6212; --coolbg:#f0f6e4; }}
-  @media (prefers-color-scheme: dark) {{ :root {{
-    --bg:#0f1115; --card:#171a20; --ink:#e8eaee; --muted:#9aa3b2; --line:#272c35;
-    --hotbg:#3a1e10; --warmbg:#3a2f10; --coolbg:#1f2d14;
-    --hot:#fb923c; --warm:#fbbf24; --cool:#a3e635; }} }}
+    --cool:#15803d; --coolbg:#f0fdf4; --brand:#0f766e;
+  }}
+  @media (prefers-color-scheme: dark) {{
+    :root {{
+      --bg:#0f1217; --card:#171b22; --ink:#e6edf3; --muted:#8b949e; --line:#30363d;
+      --hot:#fb923c; --hotbg:#431407; --warm:#facc15; --warmbg:#422006;
+      --cool:#4ade80; --coolbg:#052e16; --brand:#2dd4bf;
+    }}
+  }}
   * {{ box-sizing:border-box }}
-  body {{ margin:0; padding:24px; background:var(--bg); color:var(--ink);
-    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }}
-  header {{ max-width:1180px; margin:0 auto 20px; }}
+  body {{ margin:0; background:var(--bg); color:var(--ink);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    padding:24px 20px; }}
+  header, main, footer {{ max-width:880px; margin:0 auto }}
+  header {{ margin-bottom:20px }}
   h1 {{ font-size:22px; margin:0 0 4px; letter-spacing:-.01em }}
   .sub {{ color:var(--muted); font-size:13px }}
-  .counts {{ display:flex; gap:8px; flex-wrap:wrap; margin-top:12px }}
-  .pill {{ padding:4px 10px; border-radius:999px; font-size:12px; font-weight:600;
-    border:1px solid var(--line); background:var(--card) }}
-  .pill.hot {{ color:var(--hot); background:var(--hotbg) }}
-  .pill.warm {{ color:var(--warm); background:var(--warmbg) }}
-  .pill.cool {{ color:var(--cool); background:var(--coolbg) }}
-  main {{ max-width:1180px; margin:0 auto; display:grid; gap:12px }}
-  .lead {{ background:var(--card); border:1px solid var(--line); border-radius:12px;
-    padding:14px 16px; display:grid; grid-template-columns:auto 1fr auto; gap:14px;
-    align-items:start }}
+  .counts {{ display:flex; gap:8px; margin-top:12px }}
+  .pill {{ padding:3px 9px; border-radius:99px; font-size:12px; font-weight:600 }}
+  .pill.hot {{ background:var(--hotbg); color:var(--hot) }}
+  .pill.warm {{ background:var(--warmbg); color:var(--warm) }}
+  .pill.cool {{ background:var(--coolbg); color:var(--cool) }}
+  main {{ display:grid; gap:12px }}
+  .lead {{ background:var(--card); border:1px solid var(--line); border-radius:10px;
+    padding:14px 16px; display:grid; grid-template-columns:auto 1fr auto;
+    gap:14px; align-items:flex-start; transition:opacity .15s }}
   .lead.done {{ opacity:.45 }}
-  .tick {{ width:22px; height:22px; margin-top:3px; cursor:pointer; accent-color:#2563eb }}
-  .rank {{ font-size:12px; color:var(--muted); font-weight:600 }}
-  .name {{ font-size:16px; font-weight:650; margin:2px 0 4px }}
-  .hook {{ margin:8px 0 0; padding:9px 11px; border-left:3px solid var(--line);
-    background:var(--bg); border-radius:0 8px 8px 0; font-size:14px }}
-  .meta {{ display:flex; gap:14px; flex-wrap:wrap; font-size:12.5px;
-    color:var(--muted); margin-top:8px }}
-  .meta a {{ color:inherit }}
-  .side {{ text-align:right; display:grid; gap:6px; justify-items:end }}
-  .tel {{ font-size:16px; font-weight:650; text-decoration:none; color:inherit;
-    white-space:nowrap }}
-  .tel:hover {{ text-decoration:underline }}
-  .score {{ font-size:12px; color:var(--muted) }}
-  .tag {{ display:inline-block; padding:2px 8px; border-radius:999px;
-    font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em }}
-  .tag.hot {{ color:var(--hot); background:var(--hotbg) }}
-  .tag.warm {{ color:var(--warm); background:var(--warmbg) }}
-  .tag.cool {{ color:var(--cool); background:var(--coolbg) }}
-  footer {{ max-width:1180px; margin:24px auto 0; color:var(--muted); font-size:12px }}
-  @media (max-width:720px) {{
-    body {{ padding:14px }}
-    .lead {{ grid-template-columns:auto 1fr; }}
-    .side {{ grid-column:2; justify-items:start; text-align:left }}
-  }}
+  .lead.done .name {{ text-decoration:line-through }}
+  .tick {{ margin-top:3px; width:17px; height:17px; cursor:pointer }}
+  .name {{ font-weight:700; font-size:15.5px; display:inline }}
+  .rank {{ display:inline-block; color:var(--muted); font-size:12px;
+    margin-right:6px; font-weight:600 }}
+  .tag {{ display:inline-block; font-size:11px; font-weight:700; text-transform:uppercase;
+    letter-spacing:.04em; padding:1px 6px; border-radius:4px; margin-left:6px;
+    vertical-align:middle }}
+  .tag.hot {{ background:var(--hotbg); color:var(--hot) }}
+  .tag.warm {{ background:var(--warmbg); color:var(--warm) }}
+  .tag.cool {{ background:var(--coolbg); color:var(--cool) }}
+  .hook {{ margin:6px 0 6px; font-size:13.5px }}
+  .meta {{ font-size:12px; color:var(--muted) }}
+  .meta a {{ color:inherit; text-decoration:underline }}
+  .side {{ text-align:right }}
+  .tel {{ display:inline-block; background:var(--brand); color:#fff !important;
+    text-decoration:none; padding:7px 12px; border-radius:6px; font-weight:600;
+    font-size:13px; white-space:nowrap }}
+  .score {{ color:var(--muted); font-size:11.5px; margin-top:4px }}
+  .outcome {{ margin-top:6px; max-width:150px; padding:5px 7px; border:1px solid var(--line);
+    border-radius:7px; background:var(--card); color:var(--ink); font:inherit; font-size:12px }}
+  footer {{ margin-top:32px; color:var(--muted); font-size:12px; text-align:center }}
   @media print {{
-    body {{ background:#fff; padding:0 }} .tick {{ display:none }}
+    body {{ background:#fff; color:#000; padding:0 }}
     .lead {{ break-inside:avoid; border-color:#ccc }}
+    .outcome {{ display:none }}
   }}
 </style></head>
 <body>
@@ -164,16 +191,99 @@ _PAGE = """<!doctype html>
   file private and delete it when the campaign ends.
 </footer>
 <script>
-document.querySelectorAll('.tick').forEach(function (box) {{
-  box.addEventListener('change', function () {{
-    box.closest('.lead').classList.toggle('done', box.checked);
+(function () {{
+  var CALLED_KEY = 'leadscan.called.v1';
+  var OUTCOME_KEY = 'leadscan.outcome.v1';
+  var called = {{}};
+  var outcomes = {{}};
+
+  function isValidOutcome(val) {{
+    return val === 'follow-up' || val === 'interested' || val === 'not-interested';
+  }}
+
+  try {{
+    var rawCalled = localStorage.getItem(CALLED_KEY);
+    if (rawCalled) {{
+      var parsedCalled = JSON.parse(rawCalled);
+      if (parsedCalled && typeof parsedCalled === 'object' && !Array.isArray(parsedCalled)) {{
+        called = parsedCalled;
+      }}
+    }}
+  }} catch (e) {{
+    called = {{}};
+  }}
+
+  try {{
+    var rawOutcomes = localStorage.getItem(OUTCOME_KEY);
+    if (rawOutcomes) {{
+      var parsedOutcomes = JSON.parse(rawOutcomes);
+      if (parsedOutcomes && typeof parsedOutcomes === 'object' && !Array.isArray(parsedOutcomes)) {{
+        outcomes = parsedOutcomes;
+      }}
+    }}
+  }} catch (e) {{
+    outcomes = {{}};
+  }}
+
+  document.querySelectorAll('.tick').forEach(function (box) {{
+    var lead = box.closest('.lead');
+    var key = lead ? lead.dataset.leadKey : null;
+
+    if (key && called[key] === true) {{
+      box.checked = true;
+      lead.classList.add('done');
+    }}
+
+    box.addEventListener('change', function () {{
+      var isDone = box.checked;
+      if (lead) {{
+        lead.classList.toggle('done', isDone);
+      }}
+      if (key) {{
+        if (isDone) {{
+          called[key] = true;
+        }} else {{
+          delete called[key];
+        }}
+        try {{
+          localStorage.setItem(CALLED_KEY, JSON.stringify(called));
+        }} catch (e) {{
+          // Storage write failure is handled gracefully
+        }}
+      }}
+    }});
   }});
-}});
+
+  document.querySelectorAll('.outcome').forEach(function (select) {{
+    var lead = select.closest('.lead');
+    var key = lead ? lead.dataset.leadKey : null;
+
+    if (key && isValidOutcome(outcomes[key])) {{
+      select.value = outcomes[key];
+    }}
+
+    select.addEventListener('change', function () {{
+      var val = select.value;
+      if (key) {{
+        if (isValidOutcome(val)) {{
+          outcomes[key] = val;
+        }} else {{
+          delete outcomes[key];
+        }}
+        try {{
+          localStorage.setItem(OUTCOME_KEY, JSON.stringify(outcomes));
+        }} catch (e) {{
+          // Storage write failure is handled gracefully
+        }}
+      }}
+    }});
+  }});
+}})();
 </script>
 </body></html>
 """
 
-_CARD = """  <article class="lead">
+_CARD = """  <article class="lead" data-lead-key="{lead_key}">
     <input class="tick" type="checkbox" aria-label="Mark {name} as called">
     <div>
       <div class="rank">#{rank}</div>
@@ -182,7 +292,16 @@ _CARD = """  <article class="lead">
       <p class="hook">{hook}</p>
       <div class="meta">{meta}</div>
     </div>
-    <div class="side">{call}<div class="score">score {score}</div></div>
+    <div class="side">
+      {call}
+      <div class="score">score {score}</div>
+      <select class="outcome" aria-label="Contact outcome for {name}">
+        <option value="">No outcome</option>
+        <option value="follow-up">Follow up</option>
+        <option value="interested">Interested</option>
+        <option value="not-interested">Not interested</option>
+      </select>
+    </div>
   </article>"""
 
 
@@ -231,6 +350,7 @@ def write_html(rows, path, stamp=""):
                   if adtags else "")
 
         cards.append(_CARD.format(
+            lead_key=html_module.escape(_lead_state_key(row)),
             rank=index,
             name=html_module.escape(row.get("name", "")),
             tier=html_module.escape(tier),
@@ -253,7 +373,7 @@ def write_html(rows, path, stamp=""):
         count=len(rows),
         stamp=html_module.escape(stamp),
         pills=pills or '<span class="pill">no leads</span>',
-        cards="\n".join(cards) or "<p>No leads matched. Widen the sweep or lower the bar.</p>",
+        cards="\n".join(cards) if cards else '<p style="padding:20px;text-align:center;color:var(--muted)">No leads matched the filters.</p>',
     )
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(page)

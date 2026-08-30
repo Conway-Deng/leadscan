@@ -140,6 +140,151 @@ def test_write_all_produces_every_format(tmp_path):
         assert os.path.exists(written["xlsx"])
 
 
+def test_lead_state_key_stability_across_score_and_tier():
+    row_hot = lead(name="Studio", website="https://studio.sg", score=90, tier="hot")
+    row_cool = lead(name="Studio", website="https://studio.sg", score=10, tier="cool")
+    assert report._lead_state_key(row_hot) == report._lead_state_key(row_cool)
+
+
+def test_lead_state_key_website_normalization():
+    row1 = lead(website="https://STUDIO.sg/")
+    row2 = lead(website="  https://studio.sg/  ")
+    assert report._lead_state_key(row1) == report._lead_state_key(row2)
+
+
+def test_lead_state_key_phone_fallback_normalization():
+    row1 = lead(website="", phone="+65 6123 4567")
+    row2 = lead(website="", phone="65-6123-4567")
+    assert report._lead_state_key(row1) == report._lead_state_key(row2)
+
+
+def test_lead_state_key_name_fallback_normalization():
+    row1 = lead(website="", phone="", name="Quiet   Studio")
+    row2 = lead(website="", phone="", name="quiet studio")
+    assert report._lead_state_key(row1) == report._lead_state_key(row2)
+
+
+def test_lead_state_key_distinct_for_different_businesses():
+    key1 = report._lead_state_key(lead(website="https://studio-a.sg"))
+    key2 = report._lead_state_key(lead(website="https://studio-b.sg"))
+    assert key1 != key2
+
+
+def test_html_includes_data_lead_key_without_raw_sensitive_data(tmp_path):
+    path = str(tmp_path / "out.html")
+    phone = "+65 6123 4567"
+    report.write_html([lead(website="", phone=phone, name="Alpha Studio")], path)
+    page = open(path, encoding="utf-8").read()
+    assert 'data-lead-key="lead-' in page
+    # Verify raw phone number is not directly in data-lead-key attribute
+    assert f'data-lead-key="{phone}"' not in page
+    assert 'data-lead-key="61234567"' not in page
+
+
+def test_html_call_sheet_contains_lead_state_persistence_script(tmp_path):
+    path = str(tmp_path / "out.html")
+    report.write_html([lead(name="Alpha Studio", website="https://alpha.sg")], path)
+    page = open(path, encoding="utf-8").read()
+
+    # A. Storage namespace
+    assert "leadscan.called.v1" in page
+
+    # B. Stable key accessed from DOM
+    assert "dataset.leadKey" in page
+
+    # C. Restore behavior
+    assert "called[key]" in page
+    assert "box.checked = true" in page
+    assert "lead.classList.add('done')" in page
+
+    # D. Save checked state
+    assert "called[key] = true" in page
+
+    # E. Uncheck removes state
+    assert "delete called[key]" in page
+
+    # F. Safe JSON and storage error handling
+    assert "JSON.parse" in page
+    assert "JSON.stringify" in page
+    assert "try" in page
+    assert "catch" in page
+
+
+def test_html_call_sheet_contains_outcome_selector_per_lead(tmp_path):
+    path = str(tmp_path / "out.html")
+    report.write_html([
+        lead(name="Alpha Studio", website="https://alpha.sg"),
+        lead(name="Beta Design", website="https://beta.sg"),
+    ], path)
+    page = open(path, encoding="utf-8").read()
+
+    # A. One outcome selector per lead card
+    assert page.count('<article class="lead"') == 2
+    assert page.count('<select class="outcome"') == 2
+
+    # B. Exact options
+    assert '<option value="">No outcome</option>' in page
+    assert '<option value="follow-up">Follow up</option>' in page
+    assert '<option value="interested">Interested</option>' in page
+    assert '<option value="not-interested">Not interested</option>' in page
+
+    # C. Accessible label contains business name
+    assert 'aria-label="Contact outcome for Alpha Studio"' in page
+    assert 'aria-label="Contact outcome for Beta Design"' in page
+
+    # D. Selector is placed inside the card
+    assert '<div class="side">' in page
+    assert '<select class="outcome"' in page
+
+    # E. Print CSS hides outcome selector
+    assert ".outcome { display:none }" in page or ".outcome {display:none}" in page
+
+    # F. Existing called persistence remains intact
+    assert "leadscan.called.v1" in page
+    assert "dataset.leadKey" in page
+
+
+def test_html_call_sheet_contains_outcome_persistence_script(tmp_path):
+    path = str(tmp_path / "out.html")
+    report.write_html([lead(name="Alpha Studio", website="https://alpha.sg")], path)
+    page = open(path, encoding="utf-8").read()
+
+    # A. New namespace
+    assert "leadscan.outcome.v1" in page
+
+    # B. Allowed values validated
+    assert "follow-up" in page
+    assert "interested" in page
+    assert "not-interested" in page
+
+    # C. Restoration uses stable lead key
+    assert "dataset.leadKey" in page
+
+    # D. Restore logic assigns saved value
+    assert "select.value = outcomes[key]" in page
+
+    # E. Change handler saves
+    assert "outcomes[key] = val" in page or "outcomes[key] =" in page
+
+    # F. Selecting empty outcome removes key
+    assert "delete outcomes[key]" in page
+
+    # G. Safe storage handling
+    assert "JSON.parse" in page
+    assert "JSON.stringify" in page
+    assert "try" in page
+    assert "catch" in page
+
+    # H. Existing called persistence still present
+    assert "leadscan.called.v1" in page
+    assert "delete called[key]" in page
+
+    # I. Outcome handler does NOT modify .done or checkbox
+    outcome_script = page[page.find("document.querySelectorAll('.outcome')"):]
+    assert ".classList" not in outcome_script
+    assert ".checked" not in outcome_script
+
+
 # ---------------------------------------------------------------------------
 # Cache
 # ---------------------------------------------------------------------------
