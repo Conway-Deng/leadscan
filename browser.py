@@ -22,6 +22,7 @@ import urllib.parse
 from playwright.sync_api import sync_playwright
 
 import config
+import deadlines
 import detect
 import robots
 
@@ -77,7 +78,12 @@ class Browser:
         self.respect_robots = (
             config.RESPECT_ROBOTS if respect_robots is None else respect_robots
         )
+        self.deadline = None
         self._last_hit_by_host = {}
+
+    def set_deadline(self, deadline):
+        """Set the current business budget; direct callers may still pass one."""
+        self.deadline = deadline
 
     def __enter__(self):
         self._playwright = sync_playwright().start()
@@ -107,7 +113,7 @@ class Browser:
             pass
         return False
 
-    def _wait_politely(self, url=""):
+    def _wait_politely(self, url="", deadline=None):
         """
         Wait before hitting the SAME host again.
 
@@ -116,37 +122,52 @@ class Browser:
         The courtesy that matters is not hitting one server twice in quick
         succession, which is exactly what the contact-page check does.
         """
+        budget = deadline or self.deadline
+        if budget:
+            budget.check()
         host = _host_of(url)
         last = self._last_hit_by_host.get(host, 0.0)
         gap = time.time() - last
         if gap < self.polite_delay:
-            time.sleep(self.polite_delay - gap)
+            wait = self.polite_delay - gap
+            if budget:
+                wait = budget.cap_seconds(wait)
+            time.sleep(wait)
+            if budget:
+                budget.check()
         self._last_hit_by_host[host] = time.time()
 
     # -----------------------------------------------------------------
     # Page rendering
     # -----------------------------------------------------------------
-    def render(self, url):
+    def render(self, url, deadline=None):
         """
         Load a page fully. Give back (html, final_url, load_seconds, error).
 
         The first try uses the normal timeout. If it times out, one more try
         uses a longer timeout, because a slow site is not a dead site.
         """
+        budget = deadline or self.deadline
+        if budget:
+            budget.check()
         if not url or not url.strip():
             return None, None, None, "no website"
         url = url.strip()
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
 
-        if self.respect_robots and not robots.may_fetch(url):
+        robots_timeout = budget.cap_seconds(8) if budget else 8
+        if self.respect_robots and not robots.may_fetch(url, timeout=robots_timeout):
             return None, url, None, "blocked by robots.txt"
 
         timeouts = [config.NAV_TIMEOUT_MS] + [config.RETRY_TIMEOUT_MS] * config.RENDER_RETRIES
         last_error = "unreachable"
         for attempt, timeout in enumerate(timeouts):
-            self._wait_politely(url)
-            html, final_url, load, error = self._render_once(url, timeout)
+            if budget:
+                budget.check()
+            self._wait_politely(url, deadline=budget)
+            html, final_url, load, error = self._render_once(
+                url, timeout, deadline=budget)
             if error is None:
                 return html, final_url, load, None
             last_error = error
@@ -158,16 +179,28 @@ class Browser:
                 self.log(f"      retry after timeout: {url}")
         return None, url, None, last_error
 
-    def _render_once(self, url, timeout_ms):
+    def _render_once(self, url, timeout_ms, deadline=None):
         page = self.context.new_page()
         try:
             start = time.time()
+            if deadline:
+                timeout_ms = deadline.cap_milliseconds(timeout_ms)
             response = page.goto(url, timeout=timeout_ms, wait_until="load")
-            page.wait_for_timeout(int(config.SETTLE_SECONDS * 1000))
+            if deadline:
+                deadline.check()
+            settle_ms = int(config.SETTLE_SECONDS * 1000)
+            if deadline:
+                settle_ms = deadline.cap_milliseconds(settle_ms)
+            if settle_ms:
+                page.wait_for_timeout(settle_ms)
+            if deadline:
+                deadline.check()
             load = round(time.time() - start, 2)
             if response is not None and response.status >= 400:
                 return None, page.url, load, f"http {response.status}"
             return page.content(), page.url, load, None
+        except deadlines.AuditDeadlineExceeded:
+            raise
         except Exception as error:
             message = str(error).splitlines()[0][:80]
             if "Timeout" in message or "timeout" in message:
@@ -182,20 +215,29 @@ class Browser:
     # -----------------------------------------------------------------
     # Social profiles
     # -----------------------------------------------------------------
-    def followers(self, profile_url):
+    def followers(self, profile_url, deadline=None):
         """
         Best-effort follower count. Instagram and TikTok often block a logged-out
         visitor, so None is a common and correct answer, not a fault. The
         reliable "quiet" signal is the Google review count.
         """
+        budget = deadline or self.deadline
+        if budget:
+            budget.check()
         if not profile_url:
             return None
-        self._wait_politely(profile_url)
+        self._wait_politely(profile_url, deadline=budget)
         page = self.context.new_page()
         try:
-            page.goto(profile_url, timeout=config.NAV_TIMEOUT_MS,
+            timeout = (budget.cap_milliseconds(config.NAV_TIMEOUT_MS)
+                       if budget else config.NAV_TIMEOUT_MS)
+            page.goto(profile_url, timeout=timeout,
                       wait_until="domcontentloaded")
+            if budget:
+                budget.check()
             return followers_from_html(page.content())
+        except deadlines.AuditDeadlineExceeded:
+            raise
         except Exception:
             return None
         finally:
@@ -204,7 +246,7 @@ class Browser:
             except Exception:
                 pass
 
-    def find_social(self, name, region=None):
+    def find_social(self, name, region=None, deadline=None):
         """
         Find a no-website business's Instagram or TikTok with a web search.
 
@@ -212,14 +254,23 @@ class Browser:
         search. DuckDuckGo wraps each result URL in a redirect and encodes it,
         so the page is decoded first and then scanned for a real profile link.
         """
+        budget = deadline or self.deadline
+        if budget:
+            budget.check()
         region = region or config.SOCIAL_SEARCH_REGION
         query = f"{name} {region} instagram tiktok".strip()
         url = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote_plus(query)
-        self._wait_politely(url)
+        self._wait_politely(url, deadline=budget)
         page = self.context.new_page()
         try:
-            page.goto(url, timeout=config.NAV_TIMEOUT_MS, wait_until="domcontentloaded")
+            timeout = (budget.cap_milliseconds(config.NAV_TIMEOUT_MS)
+                       if budget else config.NAV_TIMEOUT_MS)
+            page.goto(url, timeout=timeout, wait_until="domcontentloaded")
+            if budget:
+                budget.check()
             html = urllib.parse.unquote(page.content())
+        except deadlines.AuditDeadlineExceeded:
+            raise
         except Exception:
             return {}
         finally:

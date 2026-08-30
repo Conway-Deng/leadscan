@@ -159,7 +159,20 @@ def test_incompatible_cache_records_are_ignored_without_being_deleted(tmp_path):
         path_obj.write_text(json.dumps(incompatible), encoding="utf-8")
         before = path_obj.read_text(encoding="utf-8")
         assert store.get("render", "https://a.test") is None
+        store.put("render", "https://a.test", {"error": "fresh"})
         assert path_obj.read_text(encoding="utf-8") == before
+
+
+def test_corrupt_cache_record_is_ignored_without_being_rewritten(tmp_path):
+    store = cache_module.Cache(directory=str(tmp_path), ttl_hours=1)
+    path = store._path("render", "https://a.test")
+    corrupt = "{half-written"
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(corrupt)
+
+    assert store.get("render", "https://a.test") is None
+    store.put("render", "https://a.test", {"error": None})
+    assert open(path, encoding="utf-8").read() == corrupt
 
 
 def test_robots_policies_do_not_share_render_cache_evidence(tmp_path):

@@ -19,7 +19,7 @@ import config
 import verify
 
 
-def audit_business(browser, business, cache=None, deep=True):
+def audit_business(browser, business, cache=None, deep=True, deadline=None):
     """
     Full pipeline for one business that has a website.
 
@@ -29,12 +29,15 @@ def audit_business(browser, business, cache=None, deep=True):
     can. That false positive is worse than a missed lead, because the caller
     opens with a statement the prospect knows is wrong.
     """
+    _start_deadline(browser, deadline)
     website = (business.get("website") or "").strip()
 
-    findings, error, final_url = _render_and_detect(browser, website, cache)
+    findings, error, final_url = _render_and_detect(
+        browser, website, cache, deadline=deadline)
 
     if deep and findings and not findings.get("can_capture_lead"):
-        findings = _check_contact_pages(browser, findings, cache)
+        _check_deadline(deadline)
+        findings = _check_contact_pages(browser, findings, cache, deadline=deadline)
 
     # If Google lists an Instagram or TikTok page as the "website", treat it as
     # the social profile. This must happen BEFORE the social marketing test,
@@ -55,8 +58,11 @@ def audit_business(browser, business, cache=None, deep=True):
     follower_count = None
     instagram = findings.get("instagram") if findings else ""
     if instagram:
-        follower_count = _cached_followers(browser, instagram, cache)
+        _check_deadline(deadline)
+        follower_count = _cached_followers(
+            browser, instagram, cache, deadline=deadline)
 
+    _check_deadline(deadline)
     verdict = scoring.score_website_lead(
         findings or {}, business.get("review_count"), follower_count, error=error
     )
@@ -64,24 +70,30 @@ def audit_business(browser, business, cache=None, deep=True):
                 status=error or "ok", final_url=final_url)
 
 
-def audit_social_only(browser, business, cache=None, region=None):
+def audit_social_only(browser, business, cache=None, region=None, deadline=None):
     """
     Pipeline for a business with NO website. There is no site to render, so the
     Instagram or TikTok profile is found with a web search instead.
     """
+    _start_deadline(browser, deadline)
     region = region or config.SOCIAL_SEARCH_REGION
     key = f"{business.get('name', '')}|{region}"
     socials = cache.get("social", key) if cache else None
     if socials is None:
+        _check_deadline(deadline)
         socials = browser.find_social(business.get("name", ""), region)
+        _check_deadline(deadline)
         if cache:
             cache.put("social", key, socials)
 
     follower_count = None
     if socials.get("instagram"):
-        follower_count = _cached_followers(browser, socials["instagram"], cache)
+        follower_count = _cached_followers(
+            browser, socials["instagram"], cache, deadline=deadline)
     if follower_count is None and socials.get("tiktok"):
-        follower_count = _cached_followers(browser, socials["tiktok"], cache)
+        follower_count = _cached_followers(
+            browser, socials["tiktok"], cache, deadline=deadline)
+    _check_deadline(deadline)
 
     verdict = scoring.score_social_only_lead(
         socials, follower_count, business.get("review_count")
@@ -99,17 +111,20 @@ def audit_social_only(browser, business, cache=None, region=None):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _render_and_detect(browser, website, cache):
+def _render_and_detect(browser, website, cache, deadline=None):
     """Give back (findings dict or None, error string or None, final url)."""
     if not website:
         return None, "no website", ""
 
+    _check_deadline(deadline)
     cached = cache.get("render", website) if cache else None
     if cached is not None:
         findings = _normalise_cached_render_findings(cached.get("findings"))
         return findings, cached.get("error"), cached.get("final_url", "")
 
+    _check_deadline(deadline)
     html, final_url, load_seconds, error = browser.render(website)
+    _check_deadline(deadline)
     findings = None
     if not error:
         findings = detect.analyze(html, final_url, load_seconds, config.SLOW_SECONDS)
@@ -131,7 +146,7 @@ def _normalise_cached_render_findings(findings):
     return normalised
 
 
-def _check_contact_pages(browser, findings, cache, limit=2):
+def _check_contact_pages(browser, findings, cache, limit=2, deadline=None):
     """
     Follow the contact links found on the home page and fold in what they show.
 
@@ -139,9 +154,12 @@ def _check_contact_pages(browser, findings, cache, limit=2):
     enough to prove the firm can take an enquiry.
     """
     for url in (findings.get("contact_links") or [])[:limit]:
+        _check_deadline(deadline)
         extra = cache.get("page", url) if cache else None
         if extra is None:
+            _check_deadline(deadline)
             html, _final_url, _load, error = browser.render(url)
+            _check_deadline(deadline)
             if error or not html:
                 # Store the failure too, so a dead contact link is not fetched
                 # again on the next run.
@@ -160,14 +178,29 @@ def _check_contact_pages(browser, findings, cache, limit=2):
     return findings
 
 
-def _cached_followers(browser, profile_url, cache):
+def _cached_followers(browser, profile_url, cache, deadline=None):
+    _check_deadline(deadline)
     cached = cache.get("followers", profile_url) if cache else None
     if cached is not None:
         return cached.get("count")
+    _check_deadline(deadline)
     count = browser.followers(profile_url)
+    _check_deadline(deadline)
     if cache:
         cache.put("followers", profile_url, {"count": count})
     return count
+
+
+def _start_deadline(browser, deadline):
+    _check_deadline(deadline)
+    setter = getattr(browser, "set_deadline", None)
+    if setter:
+        setter(deadline)
+
+
+def _check_deadline(deadline):
+    if deadline:
+        deadline.check()
 
 
 def _row(business, findings, verdict, follower_count, status, final_url):

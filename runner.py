@@ -31,10 +31,15 @@ import threading
 import checks
 import compatibility
 import config
+import deadlines
 
 
 class AuditRunError(RuntimeError):
     """The worker pool could not complete the audit run."""
+
+
+class JournalPersistenceError(RuntimeError):
+    """The authoritative recovery journal could not be appended."""
 
 
 def business_key(business):
@@ -59,7 +64,11 @@ class Journal:
         if path:
             folder = os.path.dirname(os.path.abspath(path))
             if folder:
-                os.makedirs(folder, exist_ok=True)
+                try:
+                    os.makedirs(folder, exist_ok=True)
+                except OSError as error:
+                    raise JournalPersistenceError(
+                        f"could not prepare {folder}: {error}") from error
 
     def done_keys(self):
         """Keys already recorded, so they can be skipped."""
@@ -103,8 +112,9 @@ class Journal:
                 with open(self.path, "a", encoding="utf-8") as handle:
                     handle.write(json.dumps(record, default=str) + "\n")
                     handle.flush()
-            except OSError:
-                pass
+            except OSError as error:
+                raise JournalPersistenceError(
+                    f"could not append {self.path}: {error}") from error
 
 
 def run_audits(businesses, social_only=False, cache=None, log=print,
@@ -118,7 +128,12 @@ def run_audits(businesses, social_only=False, cache=None, log=print,
     """
     run_fingerprint = compatibility.run_fingerprint(
         social_only=social_only, deep=deep, respect_robots=respect_robots)
-    journal = Journal(journal_path, run_fingerprint=run_fingerprint)
+    try:
+        journal = Journal(journal_path, run_fingerprint=run_fingerprint)
+    except JournalPersistenceError as error:
+        raise AuditRunError(
+            f"Journal persistence failed: {error}. Check the journal path, "
+            "permissions and available disk space, then retry.") from error
     already = journal.done_keys() if resume_journal else {}
     if already:
         log(f"Journal holds {len(already)} finished firms. They will be skipped.")
@@ -150,9 +165,19 @@ def run_audits(businesses, social_only=False, cache=None, log=print,
 
     counter = {"done": 0}
     counter_lock = threading.Lock()
-    worker_state = {"started": 0}
+    worker_state = {"started": 0, "journal_error": None}
     worker_state_lock = threading.Lock()
+    stop_work = threading.Event()
+    dequeue_lock = threading.Lock()
     total = len(todo)
+
+    def stop_for_journal_error(error):
+        # The same lock makes recording the failure and stopping future
+        # dequeues one atomic state transition.
+        with dequeue_lock:
+            if worker_state["journal_error"] is None:
+                worker_state["journal_error"] = error
+            stop_work.set()
 
     def worker(worker_number):
         try:
@@ -162,22 +187,37 @@ def run_audits(businesses, social_only=False, cache=None, log=print,
                 with worker_state_lock:
                     worker_state["started"] += 1
                 while True:
-                    try:
-                        index, key, input_fingerprint, business = work.get_nowait()
-                    except queue.Empty:
-                        return
+                    with dequeue_lock:
+                        if stop_work.is_set():
+                            return
+                        try:
+                            index, key, input_fingerprint, business = work.get_nowait()
+                        except queue.Empty:
+                            return
+                    business_deadline = deadlines.Deadline(
+                        config.BUSINESS_TIMEOUT_SECONDS)
                     try:
                         if social_only:
-                            row = checks.audit_social_only(browser, business, cache=cache)
+                            row = checks.audit_social_only(
+                                browser, business, cache=cache,
+                                deadline=business_deadline)
                         else:
                             row = checks.audit_business(browser, business,
-                                                        cache=cache, deep=deep)
+                                                        cache=cache, deep=deep,
+                                                        deadline=business_deadline)
+                    except deadlines.AuditDeadlineExceeded:
+                        row = _deadline_row(business)
                     except Exception as error:
                         # One bad site must never stop the run.
                         row = _error_row(business, error)
                     results[index] = row
-                    journal.append(key, row, business=business,
-                                   input_fingerprint=input_fingerprint)
+                    try:
+                        journal.append(key, row, business=business,
+                                       input_fingerprint=input_fingerprint)
+                    except JournalPersistenceError as error:
+                        stop_for_journal_error(error)
+                        log(f"  worker {worker_number} stopped: {error}")
+                        return
                     with counter_lock:
                         counter["done"] += 1
                         _report(log, counter["done"], total, row)
@@ -198,6 +238,10 @@ def run_audits(businesses, social_only=False, cache=None, log=print,
             "Run the same command again to carry on.")
 
     remaining = sum(1 for index, *_rest in todo if results[index] is None)
+    if worker_state["journal_error"] is not None:
+        raise AuditRunError(
+            f"Journal persistence failed: {worker_state['journal_error']}. "
+            "Check the journal path, permissions and available disk space, then retry.")
     if worker_state["started"] == 0:
         raise AuditRunError(
             "No audit workers could start. Check the browser installation "
@@ -234,3 +278,10 @@ def _error_row(business, error):
         "website": business.get("website", ""), "final_url": "",
         "status": "scan failed",
     }
+
+
+def _deadline_row(business):
+    row = _error_row(business, "audit deadline exceeded")
+    row["reasons"] = "audit deadline exceeded"
+    row["status"] = "audit deadline exceeded"
+    return row

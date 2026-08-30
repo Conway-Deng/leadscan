@@ -29,6 +29,7 @@ def evidence_settings(respect_robots=None):
         "pipeline_schema_version": config.PIPELINE_SCHEMA_VERSION,
         "respect_robots": bool(respect_robots),
         "slow_seconds": config.SLOW_SECONDS,
+        "business_timeout_seconds": config.BUSINESS_TIMEOUT_SECONDS,
         "nav_timeout_ms": config.NAV_TIMEOUT_MS,
         "retry_timeout_ms": config.RETRY_TIMEOUT_MS,
         "render_retries": config.RENDER_RETRIES,

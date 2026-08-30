@@ -142,6 +142,17 @@ def test_instagram_profile_is_found():
         "https://www.instagram.com/studio.sg"
 
 
+def test_protocol_relative_instagram_profile_is_normalised():
+    html = page("<a href='//www.instagram.com/studio.sg/#bio'>follow</a>")
+    assert detect.first_profile(html, "instagram") == \
+        "https://www.instagram.com/studio.sg"
+
+
+def test_non_http_profile_scheme_is_not_promoted_to_https():
+    html = page("<a href='ftp://www.instagram.com/studio.sg/'>follow</a>")
+    assert detect.first_profile(html, "instagram") is None
+
+
 def test_tiktok_profile_is_normalised():
     html = page("<a href='https://www.tiktok.com/@renovate.sg?lang=en'>tiktok</a>")
     assert detect.first_profile(html, "tiktok") == "https://www.tiktok.com/@renovate.sg"

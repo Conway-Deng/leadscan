@@ -80,6 +80,28 @@ def test_mailto_and_tel_links_are_not_pages_to_fetch():
     assert detect.find_contact_links(soup_of(html), "https://studio.sg/") == []
 
 
+def test_contact_links_normalise_protocol_case_and_fragments():
+    html = ("<a href='//studio.sg/contact#form'>Contact</a>"
+            "<a href='HTTPS://studio.sg/contact#map'>Contact map</a>")
+    assert detect.find_contact_links(soup_of(html), "https://studio.sg/") == [
+        "https://studio.sg/contact"]
+
+
+def test_non_http_and_malformed_contact_links_are_never_fetched():
+    html = ("<a href='javascript:openContact()'>Contact</a>"
+            "<a href='data:text/html,contact'>Contact</a>"
+            "<a href='file:///contact'>Contact</a>"
+            "<a href='http://[broken/contact'>Contact</a>")
+    assert detect.find_contact_links(soup_of(html), "https://studio.sg/") == []
+
+
+def test_bare_and_www_hosts_are_equivalent_only_for_local_contact_pages():
+    html = ("<a href='https://www.studio.sg/contact'>Contact</a>"
+            "<a href='https://unrelated.sg/contact'>External contact</a>")
+    assert detect.find_contact_links(soup_of(html), "https://studio.sg/") == [
+        "https://www.studio.sg/contact"]
+
+
 # ---------------------------------------------------------------------------
 # Merging a second page
 # ---------------------------------------------------------------------------
@@ -204,7 +226,7 @@ def _install_fake_audit(monkeypatch, audited):
     browser_module.Browser = FakeBrowser
     monkeypatch.setitem(sys.modules, "browser", browser_module)
 
-    def fake_audit(_browser, business, cache=None, deep=True):
+    def fake_audit(_browser, business, cache=None, deep=True, deadline=None):
         audited.append(business.copy())
         return {"name": business["name"], "score": 70, "tier": "hot",
                 "warm": True, "disqualified": False}
@@ -441,7 +463,7 @@ def test_one_worker_may_fail_if_another_finishes_every_business(monkeypatch):
     _install_browser(monkeypatch, SometimesBrokenBrowser)
     audited = []
 
-    def fake_audit(_browser, business, cache=None, deep=True):
+    def fake_audit(_browser, business, cache=None, deep=True, deadline=None):
         audited.append(business["place_id"])
         return {"name": business["name"], "score": 70, "tier": "hot",
                 "warm": True, "disqualified": False}
@@ -482,7 +504,7 @@ def test_per_business_failure_remains_an_isolated_error_row(monkeypatch):
     audited = []
     _install_fake_audit(monkeypatch, audited)
 
-    def sometimes_fails(_browser, business, cache=None, deep=True):
+    def sometimes_fails(_browser, business, cache=None, deep=True, deadline=None):
         if business["place_id"] == "A":
             raise RuntimeError("site-specific render failure")
         return {"name": business["name"], "score": 70, "tier": "hot",

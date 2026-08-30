@@ -282,6 +282,8 @@ reported as broken), and a parked domain.
   switches this off; think before you use it.
 * At most two pages are read per firm, with a one-second gap between two hits on
   the same server. Raise `LEADSCAN_POLITE_DELAY` before you run at high volume.
+* Each business has a 90-second total audit budget. Set
+  `LEADSCAN_BUSINESS_TIMEOUT_SECONDS` to tune that cooperative deadline.
 * `--exclude` stops you calling the same firm twice across sweeps. Point it at
   the last call sheet you worked through.
 

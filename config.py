@@ -60,6 +60,10 @@ MID_REVIEWS = _int("LEADSCAN_MID_REVIEWS", 100)
 # A page slower than this many seconds loses clicks.
 SLOW_SECONDS = _float("LEADSCAN_SLOW_SECONDS", 5.0)
 
+# Total cooperative budget for every render, retry, contact page and social
+# lookup belonging to one business. Individual browser timeouts are capped by it.
+BUSINESS_TIMEOUT_SECONDS = _float("LEADSCAN_BUSINESS_TIMEOUT_SECONDS", 90.0)
+
 
 # ---------------------------------------------------------------------------
 # Network behaviour

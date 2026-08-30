@@ -216,10 +216,15 @@ _RESERVED_HANDLES = {
     "instagram", "facebook", "tiktok", "meta", "graphapi", "connect",
 }
 
-_IG_PATTERN = re.compile(r"https?://(?:www\.)?instagram\.com/([A-Za-z0-9_.]{2,30})/?", re.I)
-_TT_PATTERN = re.compile(r"https?://(?:www\.)?tiktok\.com/@([A-Za-z0-9_.]{2,30})/?", re.I)
+_IG_PATTERN = re.compile(
+    r"(?:https?://|(?<!:)//)(?:www\.)?instagram\.com/"
+    r"([A-Za-z0-9_.]{2,30})/?", re.I)
+_TT_PATTERN = re.compile(
+    r"(?:https?://|(?<!:)//)(?:www\.)?tiktok\.com/@"
+    r"([A-Za-z0-9_.]{2,30})/?", re.I)
 _FB_PATTERN = re.compile(
-    r"https?://(?:www\.|web\.|m\.)?facebook\.com/([A-Za-z0-9_.\-]{2,60})/?", re.I
+    r"(?:https?://|(?<!:)//)(?:www\.|web\.|m\.)?facebook\.com/"
+    r"([A-Za-z0-9_.\-]{2,60})/?", re.I
 )
 
 # Subdomains of a social platform that are never a business profile.
@@ -253,6 +258,8 @@ def first_profile(html, network):
             continue
         if network == "tiktok":
             return f"https://www.tiktok.com/@{match.group(1)}"
+        if full.startswith("//"):
+            return "https:" + full
         return full
     return None
 
@@ -297,9 +304,13 @@ def find_contact_links(soup, base_url, limit=2):
     contact form. The order follows how likely each link is to be the real one.
     """
     try:
-        base_host = urllib.parse.urlparse(base_url).netloc.lower()
+        base_parsed = urllib.parse.urlparse(base_url)
+        base_site = _contact_site(base_parsed)
     except ValueError:
         return []
+    if base_site is None:
+        return []
+    base_clean = base_parsed._replace(fragment="").geturl().rstrip("/")
 
     scored = []
     seen = set()
@@ -311,15 +322,19 @@ def find_contact_links(soup, base_url, limit=2):
             absolute = urllib.parse.urljoin(base_url, href)
         except ValueError:
             continue
-        parsed = urllib.parse.urlparse(absolute)
+        try:
+            parsed = urllib.parse.urlparse(absolute)
+            site = _contact_site(parsed)
+        except ValueError:
+            continue
         if parsed.scheme not in ("http", "https"):
             continue
         # Stay on the same site. An external "book on Fresha" link is already
         # counted as a capture method by find_capture_methods.
-        if parsed.netloc.lower() != base_host:
+        if site != base_site:
             continue
         clean = parsed._replace(fragment="").geturl()
-        if clean in seen or clean.rstrip("/") == base_url.rstrip("/"):
+        if clean in seen or clean.rstrip("/") == base_clean:
             continue
         text = " ".join(tag.stripped_strings)[:80]
         target = f"{parsed.path} {text}"
@@ -331,6 +346,20 @@ def find_contact_links(soup, base_url, limit=2):
 
     scored.sort()
     return [url for _depth, _length, url in scored[:limit]]
+
+
+def _contact_site(parsed):
+    """Comparable local-site identity, treating bare and www hosts equally."""
+    try:
+        host = (parsed.hostname or "").lower().rstrip(".")
+        port = parsed.port
+    except ValueError:
+        return None
+    if not host:
+        return None
+    if host.startswith("www."):
+        host = host[4:]
+    return host, port
 
 
 # ---------------------------------------------------------------------------

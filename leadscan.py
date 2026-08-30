@@ -34,6 +34,7 @@ import audit_report
 import cache as cache_module
 import checks
 import config
+import deadlines
 import outreach
 import report
 import runner
@@ -106,12 +107,19 @@ def _audit_one(args, log):
     business = {"name": args.audit, "website": url, "phone": "",
                 "review_count": None, "place_id": ""}
     store = cache_module.Cache(enabled=not args.no_cache,
-                               respect_robots=not args.ignore_robots)
+                               respect_robots=not args.ignore_robots, log=log)
 
     log(f"Reviewing {url} ...")
-    with Browser(log=log, respect_robots=not args.ignore_robots) as browser:
-        row = checks.audit_business(browser, business, cache=store,
-                                    deep=not args.shallow)
+    try:
+        with Browser(log=log, respect_robots=not args.ignore_robots) as browser:
+            business_deadline = deadlines.Deadline(
+                config.BUSINESS_TIMEOUT_SECONDS)
+            row = checks.audit_business(
+                browser, business, cache=store, deep=not args.shallow,
+                deadline=business_deadline)
+    except deadlines.AuditDeadlineExceeded:
+        log("Could not review the site: audit deadline exceeded")
+        return 1
 
     if row["status"] != "ok":
         log(f"Could not review the site: {row['status']}")
@@ -222,7 +230,7 @@ def main(argv=None):
         log(f"Cache cleared: {config.CACHE_DIR}")
 
     store = cache_module.Cache(enabled=not args.no_cache,
-                               respect_robots=not args.ignore_robots)
+                               respect_robots=not args.ignore_robots, log=log)
 
     # --- Source the businesses ---
     if args.input:
