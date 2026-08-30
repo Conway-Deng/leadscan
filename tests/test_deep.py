@@ -6,12 +6,15 @@ exclusion list. These are the parts added after the first hardening pass.
 import json
 import os
 import sys
+import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bs4 import BeautifulSoup  # noqa: E402
 
 import detect  # noqa: E402
+import compatibility  # noqa: E402
+import config  # noqa: E402
 import leadscan  # noqa: E402
 import runner  # noqa: E402
 import scoring  # noqa: E402
@@ -178,23 +181,60 @@ def test_a_parked_site_gets_its_own_opening_line():
 # The journal
 # ---------------------------------------------------------------------------
 
-def test_the_journal_records_and_replays(tmp_path):
+def _journal_identity(business):
+    return (runner.business_key(business),
+            compatibility.business_fingerprint(business))
+
+
+def _install_fake_audit(monkeypatch, audited):
+    class FakeBrowser:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    browser_module = types.ModuleType("browser")
+    browser_module.Browser = FakeBrowser
+    monkeypatch.setitem(sys.modules, "browser", browser_module)
+
+    def fake_audit(_browser, business, cache=None, deep=True):
+        audited.append(business.copy())
+        return {"name": business["name"], "score": 70, "tier": "hot",
+                "warm": True, "disqualified": False}
+
+    monkeypatch.setattr(runner.checks, "audit_business", fake_audit)
+
+
+def test_current_version_journal_records_and_replays(tmp_path):
     path = str(tmp_path / "run.jsonl")
+    alpha = {"place_id": "A", "name": "Alpha"}
+    beta = {"place_id": "B", "name": "Beta"}
     journal = runner.Journal(path)
     assert journal.done_keys() == {}
-    journal.append("pid:A", {"name": "Alpha", "score": 80})
-    journal.append("pid:B", {"name": "Beta", "score": 40})
+    journal.append("pid:A", {"name": "Alpha", "score": 80}, business=alpha)
+    journal.append("pid:B", {"name": "Beta", "score": 40}, business=beta)
     replayed = journal.done_keys()
-    assert set(replayed) == {"pid:A", "pid:B"}
-    assert replayed["pid:A"]["name"] == "Alpha"
+    assert set(replayed) == {_journal_identity(alpha), _journal_identity(beta)}
+    assert replayed[_journal_identity(alpha)]["name"] == "Alpha"
+    assert (replayed[_journal_identity(alpha)]["_pipeline_version"]
+            == config.PIPELINE_SCHEMA_VERSION)
 
 
 def test_a_half_written_last_line_is_ignored(tmp_path):
     """A run killed mid-write must not stop the next run from starting."""
     path = tmp_path / "run.jsonl"
-    path.write_text(json.dumps({"_key": "pid:A", "name": "Alpha"}) + "\n"
+    business = {"place_id": "A", "name": "Alpha"}
+    valid = {"_key": "pid:A", "name": "Alpha",
+             "_pipeline_version": config.PIPELINE_SCHEMA_VERSION,
+             "_run_fingerprint": compatibility.run_fingerprint(),
+             "_business_fingerprint": compatibility.business_fingerprint(business)}
+    path.write_text("not json\n" + json.dumps(valid) + "\n"
                     + '{"_key": "pid:B", "na', encoding="utf-8")
-    assert set(runner.Journal(str(path)).done_keys()) == {"pid:A"}
+    assert set(runner.Journal(str(path)).done_keys()) == {_journal_identity(business)}
 
 
 def test_a_journal_with_no_path_is_harmless():
@@ -208,17 +248,142 @@ def test_the_business_key_prefers_the_place_id():
     assert "Alpha" in runner.business_key({"name": "Alpha", "website": "https://a.sg"}).title()
 
 
-def test_run_audits_replays_the_journal_without_a_browser(tmp_path):
+def test_run_audits_replays_current_journal_without_a_browser(tmp_path):
     """Every firm is already recorded, so no browser is ever started."""
     path = str(tmp_path / "run.jsonl")
+    business = {"place_id": "A", "name": "Alpha"}
     runner.Journal(path).append("pid:A", {"name": "Alpha", "score": 70,
                                           "warm": True, "disqualified": False,
-                                          "tier": "hot"})
-    rows = runner.run_audits([{"place_id": "A", "name": "Alpha"}],
+                                          "tier": "hot"}, business=business)
+    rows = runner.run_audits([business],
                              log=lambda m: None, journal_path=path)
     assert len(rows) == 1
     assert rows[0]["name"] == "Alpha"
-    assert "_key" not in rows[0]
+    internal = {"_key", "_pipeline_version", "_run_fingerprint",
+                "_business_fingerprint"}
+    assert internal.isdisjoint(rows[0])
+
+
+def test_a_scoring_threshold_change_invalidates_journal_replay(tmp_path,
+                                                               monkeypatch):
+    path = str(tmp_path / "run.jsonl")
+    business = {"place_id": "A", "name": "Alpha", "review_count": 12}
+    runner.Journal(path).append("pid:A", {"name": "Alpha"}, business=business)
+    monkeypatch.setattr(config, "QUIET_REVIEWS", config.QUIET_REVIEWS + 1)
+    assert runner.Journal(path).done_keys() == {}
+
+
+def test_deep_and_shallow_runs_do_not_share_journal_results(tmp_path):
+    path = str(tmp_path / "run.jsonl")
+    business = {"place_id": "A", "name": "Alpha"}
+    deep = compatibility.run_fingerprint(deep=True)
+    runner.Journal(path, deep).append("pid:A", {"name": "Alpha"},
+                                      business=business)
+    shallow = compatibility.run_fingerprint(deep=False)
+    assert runner.Journal(path, shallow).done_keys() == {}
+
+
+def test_robots_policies_do_not_share_journal_results(tmp_path):
+    path = str(tmp_path / "run.jsonl")
+    business = {"place_id": "A", "name": "Alpha"}
+    obey = compatibility.run_fingerprint(respect_robots=True)
+    runner.Journal(path, obey).append("pid:A", {"name": "Alpha"},
+                                      business=business)
+    ignore = compatibility.run_fingerprint(respect_robots=False)
+    assert runner.Journal(path, ignore).done_keys() == {}
+
+
+def test_social_and_website_runs_do_not_share_journal_results(tmp_path):
+    path = str(tmp_path / "run.jsonl")
+    business = {"place_id": "A", "name": "Alpha"}
+    website = compatibility.run_fingerprint(social_only=False)
+    runner.Journal(path, website).append("pid:A", {"name": "Alpha"},
+                                         business=business)
+    social = compatibility.run_fingerprint(social_only=True)
+    assert runner.Journal(path, social).done_keys() == {}
+
+
+def test_changed_business_input_is_reaudited_for_the_same_place_id(tmp_path,
+                                                                  monkeypatch):
+    path = str(tmp_path / "run.jsonl")
+    old = {"place_id": "A", "name": "Alpha", "review_count": 12,
+           "website": "https://alpha.sg", "rating": 4.2}
+    current = dict(old, review_count=13)
+    runner.Journal(path).append("pid:A", {"name": "stale"}, business=old)
+    audited = []
+    _install_fake_audit(monkeypatch, audited)
+
+    rows = runner.run_audits([current], workers=1, log=lambda _message: None,
+                             journal_path=path)
+
+    assert audited == [current]
+    assert rows[0]["name"] == "Alpha"
+    assert len((tmp_path / "run.jsonl").read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_no_cache_mode_bypasses_journal_replay_but_appends_recovery_rows(
+        tmp_path, monkeypatch):
+    path = str(tmp_path / "run.jsonl")
+    business = {"place_id": "A", "name": "Alpha"}
+    runner.Journal(path).append("pid:A", {"name": "stale"}, business=business)
+    audited = []
+    _install_fake_audit(monkeypatch, audited)
+
+    rows = runner.run_audits([business], workers=1, log=lambda _message: None,
+                             journal_path=path, resume_journal=False)
+
+    assert audited == [business]
+    assert rows[0]["name"] == "Alpha"
+    assert len((tmp_path / "run.jsonl").read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_no_cache_cli_disables_cache_reads_and_journal_replay(tmp_path,
+                                                              monkeypatch):
+    source = tmp_path / "businesses.csv"
+    source.write_text("place_id,name,website\nA,Alpha,https://alpha.sg\n",
+                      encoding="utf-8")
+    captured = {}
+
+    def fake_audit_all(_businesses, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(leadscan, "audit_all", fake_audit_all)
+    monkeypatch.chdir(tmp_path)
+    result = leadscan.main(["--input", str(source), "--no-cache",
+                            "--out", str(tmp_path / "leads.csv")])
+
+    assert result == 0
+    assert captured["resume_journal"] is False
+    assert captured["cache"].enabled is False
+    help_text = leadscan.build_parser().format_help()
+    assert "journal replay" in help_text
+
+
+def test_missing_and_old_version_journal_rows_are_reaudited(tmp_path, monkeypatch):
+    path = tmp_path / "run.jsonl"
+    old = config.PIPELINE_SCHEMA_VERSION - 1
+    path.write_text(
+        json.dumps({"_key": "pid:A", "name": "stale missing version"}) + "\n"
+        + json.dumps({"_key": "pid:B", "name": "stale old version",
+                      "_pipeline_version": old}) + "\n",
+        encoding="utf-8")
+
+    audited = []
+    _install_fake_audit(monkeypatch, audited)
+    businesses = [{"place_id": "A", "name": "Alpha"},
+                  {"place_id": "B", "name": "Beta"}]
+    rows = runner.run_audits(
+        businesses,
+        workers=1, log=lambda _message: None, journal_path=str(path))
+
+    assert audited == businesses
+    assert [row["name"] for row in rows] == ["Alpha", "Beta"]
+    current = runner.Journal(str(path)).done_keys()
+    assert set(current) == {_journal_identity(business) for business in businesses}
+    assert all(record["_pipeline_version"] == config.PIPELINE_SCHEMA_VERSION
+               for record in current.values())
+    assert len(path.read_text(encoding="utf-8").splitlines()) == 4
 
 
 # ---------------------------------------------------------------------------

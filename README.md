@@ -112,7 +112,7 @@ traffic but you cannot capture it" is a useful thing to know on the call.
 | `--reports [DIR]` | Write one prospect-facing website review per lead (default `reports/`). |
 | `--crm [PATH]` | Also write a CSV shaped for Instantly, Lemlist, Smartlead or HubSpot. |
 | `--ignore-robots` | Read sites even when `robots.txt` says not to. The default is to obey it. |
-| `--no-cache` | Fetch everything again. |
+| `--no-cache` | Bypass cache reads and journal replay; audit everything again. |
 | `--clear-cache` | Delete the cache folder first. |
 | `--log PATH` | Append the run log to a file. |
 
@@ -221,7 +221,9 @@ server for a second page does.
 Every Places search, every rendered page and every follower lookup is stored in
 `.leadscan-cache/` for seven days. If a run stops halfway, start it again and it
 picks up where it left off without paying for the same API calls twice. Delete
-the folder at any time, or pass `--clear-cache`.
+the folder at any time, or pass `--clear-cache`. `--no-cache` fetches and audits
+everything again, bypassing both cache reads and existing journal replay. Newly
+completed rows are still appended to the journal for crash recovery.
 
 ## Tests
 

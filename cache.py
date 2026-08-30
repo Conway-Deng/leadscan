@@ -19,11 +19,13 @@ import json
 import os
 import time
 
+import compatibility
 import config
 
 
 class Cache:
-    def __init__(self, directory=None, ttl_hours=None, enabled=True):
+    def __init__(self, directory=None, ttl_hours=None, enabled=True,
+                 respect_robots=None):
         self.directory = directory or config.CACHE_DIR
         # A ttl of 0 means "always stale". `or` would treat that as "unset",
         # so the check has to be explicit.
@@ -31,13 +33,15 @@ class Cache:
             ttl_hours = config.CACHE_TTL_HOURS
         self.ttl_seconds = ttl_hours * 3600
         self.enabled = enabled
+        self.fingerprint = compatibility.cache_fingerprint(respect_robots)
         self.hits = 0
         self.misses = 0
         if self.enabled:
             os.makedirs(self.directory, exist_ok=True)
 
     def _path(self, namespace, key):
-        digest = hashlib.sha256(f"{namespace}::{key}".encode("utf-8")).hexdigest()[:32]
+        identity = f"{namespace}::{self.fingerprint}::{key}"
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
         return os.path.join(self.directory, f"{namespace}-{digest}.json")
 
     def get(self, namespace, key):
@@ -50,7 +54,13 @@ class Cache:
                 record = json.load(handle)
         except (OSError, ValueError):
             return None
-        if time.time() - record.get("stored_at", 0) > self.ttl_seconds:
+        if (not isinstance(record, dict)
+                or record.get("_pipeline_version") != config.PIPELINE_SCHEMA_VERSION):
+            return None
+        if record.get("_cache_fingerprint") != self.fingerprint:
+            return None
+        if (self.ttl_seconds <= 0
+                or time.time() - record.get("stored_at", 0) > self.ttl_seconds):
             return None
         self.hits += 1
         return record.get("value")
@@ -60,7 +70,11 @@ class Cache:
             return value
         self.misses += 1
         path = self._path(namespace, key)
-        record = {"stored_at": time.time(), "key": key, "value": value}
+        record = {
+            "_pipeline_version": config.PIPELINE_SCHEMA_VERSION,
+            "_cache_fingerprint": self.fingerprint,
+            "stored_at": time.time(), "key": key, "value": value,
+        }
         temporary = path + ".tmp"
         try:
             with open(temporary, "w", encoding="utf-8") as handle:

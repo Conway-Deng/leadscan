@@ -1,6 +1,7 @@
 """Tests for report.py, cache.py, browser parsing, and adlibrary.py."""
 
 import csv
+import json
 import os
 import sys
 
@@ -8,6 +9,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import adlibrary  # noqa: E402
 import cache as cache_module  # noqa: E402
+import compatibility  # noqa: E402
+import config  # noqa: E402
 import report  # noqa: E402
 import scoring  # noqa: E402
 
@@ -130,11 +133,121 @@ def test_write_all_produces_every_format(tmp_path):
 # Cache
 # ---------------------------------------------------------------------------
 
-def test_cache_stores_and_reads_back(tmp_path):
+def test_current_version_cache_stores_and_reads_back(tmp_path):
     store = cache_module.Cache(directory=str(tmp_path), ttl_hours=1)
     assert store.get("render", "https://a.test") is None
     store.put("render", "https://a.test", {"error": None})
     assert store.get("render", "https://a.test") == {"error": None}
+    with open(store._path("render", "https://a.test"), encoding="utf-8") as handle:
+        assert json.load(handle)["_pipeline_version"] == config.PIPELINE_SCHEMA_VERSION
+
+
+def test_incompatible_cache_records_are_ignored_without_being_deleted(tmp_path):
+    store = cache_module.Cache(directory=str(tmp_path), ttl_hours=1)
+    store.put("render", "https://a.test", {"error": None})
+    path = store._path("render", "https://a.test")
+
+    with open(path, encoding="utf-8") as handle:
+        current = json.load(handle)
+    for version in (None, config.PIPELINE_SCHEMA_VERSION - 1):
+        incompatible = dict(current)
+        if version is None:
+            incompatible.pop("_pipeline_version")
+        else:
+            incompatible["_pipeline_version"] = version
+        path_obj = tmp_path / os.path.basename(path)
+        path_obj.write_text(json.dumps(incompatible), encoding="utf-8")
+        before = path_obj.read_text(encoding="utf-8")
+        assert store.get("render", "https://a.test") is None
+        assert path_obj.read_text(encoding="utf-8") == before
+
+
+def test_robots_policies_do_not_share_render_cache_evidence(tmp_path):
+    obey = cache_module.Cache(directory=str(tmp_path), ttl_hours=1,
+                              respect_robots=True)
+    obey.put("render", "https://a.test", {"findings": {"is_slow": False}})
+    path = obey._path("render", "https://a.test")
+    before = open(path, encoding="utf-8").read()
+
+    ignore = cache_module.Cache(directory=str(tmp_path), ttl_hours=1,
+                                respect_robots=False)
+    assert ignore.get("render", "https://a.test") is None
+    assert open(path, encoding="utf-8").read() == before
+
+
+def test_slow_threshold_changes_reject_cached_is_slow_evidence(tmp_path,
+                                                               monkeypatch):
+    store = cache_module.Cache(directory=str(tmp_path), ttl_hours=1)
+    store.put("render", "https://a.test", {"findings": {"is_slow": False}})
+    path = store._path("render", "https://a.test")
+    before = open(path, encoding="utf-8").read()
+
+    monkeypatch.setattr(config, "SLOW_SECONDS", config.SLOW_SECONDS + 1)
+    changed = cache_module.Cache(directory=str(tmp_path), ttl_hours=1)
+    assert changed.get("render", "https://a.test") is None
+    assert open(path, encoding="utf-8").read() == before
+
+
+def test_cache_fingerprints_use_distinct_paths_without_overwriting(tmp_path,
+                                                                   monkeypatch):
+    first = cache_module.Cache(directory=str(tmp_path), ttl_hours=1)
+    first.put("render", "https://a.test", {"version": "A"})
+    first_path = first._path("render", "https://a.test")
+    first_contents = open(first_path, encoding="utf-8").read()
+
+    monkeypatch.setattr(config, "SLOW_SECONDS", config.SLOW_SECONDS + 1)
+    second = cache_module.Cache(directory=str(tmp_path), ttl_hours=1)
+    second.put("render", "https://a.test", {"version": "B"})
+    second_path = second._path("render", "https://a.test")
+
+    assert first_path != second_path
+    assert os.path.exists(first_path)
+    assert os.path.exists(second_path)
+    assert first.get("render", "https://a.test") == {"version": "A"}
+    assert second.get("render", "https://a.test") == {"version": "B"}
+    assert open(first_path, encoding="utf-8").read() == first_contents
+
+
+def _fingerprints():
+    return (compatibility.cache_fingerprint(),
+            compatibility.run_fingerprint())
+
+
+def test_region_or_language_changes_invalidate_cache_and_run_fingerprints(
+        monkeypatch):
+    original = _fingerprints()
+    monkeypatch.setattr(config, "REGION_CODE", config.REGION_CODE + "-changed")
+    changed = _fingerprints()
+    assert changed[0] != original[0]
+    assert changed[1] != original[1]
+
+
+def test_social_search_region_changes_invalidate_cache_and_run_fingerprints(
+        monkeypatch):
+    original = _fingerprints()
+    monkeypatch.setattr(config, "SOCIAL_SEARCH_REGION",
+                        config.SOCIAL_SEARCH_REGION + " changed")
+    changed = _fingerprints()
+    assert changed[0] != original[0]
+    assert changed[1] != original[1]
+
+
+def test_render_setting_changes_invalidate_cache_and_run_fingerprints(
+        monkeypatch):
+    original = _fingerprints()
+    monkeypatch.setattr(config, "NAV_TIMEOUT_MS", config.NAV_TIMEOUT_MS + 1)
+    changed = _fingerprints()
+    assert changed[0] != original[0]
+    assert changed[1] != original[1]
+
+
+def test_places_legacy_mode_invalidates_cache_and_run_fingerprints(monkeypatch):
+    original = _fingerprints()
+    replacement = "0" if compatibility.places_legacy_enabled() else "1"
+    monkeypatch.setenv("LEADSCAN_PLACES_LEGACY", replacement)
+    changed = _fingerprints()
+    assert changed[0] != original[0]
+    assert changed[1] != original[1]
 
 
 def test_cache_expires(tmp_path):

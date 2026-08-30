@@ -65,12 +65,14 @@ class Logger:
 
 
 def audit_all(businesses, social_only=False, cache=None, log=print,
-              workers=1, deep=True, journal_path=None, respect_robots=True):
+              workers=1, deep=True, journal_path=None, respect_robots=True,
+              resume_journal=True):
     """Render and score every business. Give back all the result rows."""
     return runner.run_audits(businesses, social_only=social_only, cache=cache,
                              log=log, workers=workers, deep=deep,
                              journal_path=journal_path,
-                             respect_robots=respect_robots)
+                             respect_robots=respect_robots,
+                             resume_journal=resume_journal)
 
 
 def _apply_exclusions(businesses, path):
@@ -103,7 +105,8 @@ def _audit_one(args, log):
     url = args.audit.strip()
     business = {"name": args.audit, "website": url, "phone": "",
                 "review_count": None, "place_id": ""}
-    store = cache_module.Cache(enabled=not args.no_cache)
+    store = cache_module.Cache(enabled=not args.no_cache,
+                               respect_robots=not args.ignore_robots)
 
     log(f"Reviewing {url} ...")
     with Browser(log=log, respect_robots=not args.ignore_robots) as browser:
@@ -185,7 +188,9 @@ def build_parser():
                         help="Read sites even when robots.txt says not to. "
                              "The default is to obey it")
     parser.add_argument("--no-cache", action="store_true",
-                        help="Ignore the cache and fetch everything again")
+                        help="Ignore cache and journal replay; fetch and audit "
+                             "everything again. New journal rows are still "
+                             "appended for crash recovery")
     parser.add_argument("--clear-cache", action="store_true",
                         help="Delete the cache folder before the run")
     parser.add_argument("--log", metavar="PATH", help="Append the run log to a file")
@@ -216,7 +221,8 @@ def main(argv=None):
         shutil.rmtree(config.CACHE_DIR, ignore_errors=True)
         log(f"Cache cleared: {config.CACHE_DIR}")
 
-    store = cache_module.Cache(enabled=not args.no_cache)
+    store = cache_module.Cache(enabled=not args.no_cache,
+                               respect_robots=not args.ignore_robots)
 
     # --- Source the businesses ---
     if args.input:
@@ -275,7 +281,8 @@ def main(argv=None):
     results = audit_all(businesses, social_only=args.social_only, cache=store,
                         log=log, workers=args.workers, deep=not args.shallow,
                         journal_path=journal_path,
-                        respect_robots=not args.ignore_robots)
+                        respect_robots=not args.ignore_robots,
+                        resume_journal=not args.no_cache)
 
     # --- Write the call sheet ---
     leads = report.select_leads(results, args.want, include_cool=args.include_cool)

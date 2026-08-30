@@ -29,6 +29,8 @@ import queue
 import threading
 
 import checks
+import compatibility
+import config
 
 
 def business_key(business):
@@ -43,8 +45,12 @@ def business_key(business):
 class Journal:
     """Append-only record of every audited business, one JSON object per line."""
 
-    def __init__(self, path):
+    def __init__(self, path, run_fingerprint=None):
         self.path = path
+        self.run_fingerprint = (
+            run_fingerprint if run_fingerprint is not None
+            else compatibility.run_fingerprint()
+        )
         self._lock = threading.Lock()
         if path:
             folder = os.path.dirname(os.path.abspath(path))
@@ -65,16 +71,29 @@ class Journal:
                     record = json.loads(line)
                 except ValueError:
                     continue        # a half-written last line, ignore it
+                if not isinstance(record, dict):
+                    continue
+                if record.get("_pipeline_version") != config.PIPELINE_SCHEMA_VERSION:
+                    continue
+                if record.get("_run_fingerprint") != self.run_fingerprint:
+                    continue
                 key = record.get("_key")
-                if key:
-                    found[key] = record
+                input_fingerprint = record.get("_business_fingerprint")
+                if key and input_fingerprint:
+                    found[(key, input_fingerprint)] = record
         return found
 
-    def append(self, key, row):
+    def append(self, key, row, business=None, input_fingerprint=None):
         if not self.path:
             return
+        if input_fingerprint is None:
+            input_fingerprint = compatibility.business_fingerprint(
+                business if business is not None else row)
         record = dict(row)
         record["_key"] = key
+        record["_pipeline_version"] = config.PIPELINE_SCHEMA_VERSION
+        record["_run_fingerprint"] = self.run_fingerprint
+        record["_business_fingerprint"] = input_fingerprint
         with self._lock:
             try:
                 with open(self.path, "a", encoding="utf-8") as handle:
@@ -85,15 +104,18 @@ class Journal:
 
 
 def run_audits(businesses, social_only=False, cache=None, log=print,
-               workers=3, deep=True, journal_path=None, respect_robots=True):
+               workers=3, deep=True, journal_path=None, respect_robots=True,
+               resume_journal=True):
     """
     Audit every business and give back the result rows.
 
     Rows come back in the order the businesses were given, not the order they
     finished, so two runs of the same input produce the same file.
     """
-    journal = Journal(journal_path)
-    already = journal.done_keys()
+    run_fingerprint = compatibility.run_fingerprint(
+        social_only=social_only, deep=deep, respect_robots=respect_robots)
+    journal = Journal(journal_path, run_fingerprint=run_fingerprint)
+    already = journal.done_keys() if resume_journal else {}
     if already:
         log(f"Journal holds {len(already)} finished firms. They will be skipped.")
 
@@ -101,12 +123,17 @@ def run_audits(businesses, social_only=False, cache=None, log=print,
     results = [None] * len(businesses)
     for index, business in enumerate(businesses):
         key = business_key(business)
-        if key in already:
-            row = dict(already[key])
+        input_fingerprint = compatibility.business_fingerprint(business)
+        compatibility_key = (key, input_fingerprint)
+        if compatibility_key in already:
+            row = dict(already[compatibility_key])
             row.pop("_key", None)
+            row.pop("_pipeline_version", None)
+            row.pop("_run_fingerprint", None)
+            row.pop("_business_fingerprint", None)
             results[index] = row
         else:
-            todo.append((index, key, business))
+            todo.append((index, key, input_fingerprint, business))
 
     if not todo:
         log("Everything was already in the journal.")
@@ -128,7 +155,7 @@ def run_audits(businesses, social_only=False, cache=None, log=print,
                          respect_robots=respect_robots) as browser:
                 while True:
                     try:
-                        index, key, business = work.get_nowait()
+                        index, key, input_fingerprint, business = work.get_nowait()
                     except queue.Empty:
                         return
                     try:
@@ -141,7 +168,8 @@ def run_audits(businesses, social_only=False, cache=None, log=print,
                         # One bad site must never stop the run.
                         row = _error_row(business, error)
                     results[index] = row
-                    journal.append(key, row)
+                    journal.append(key, row, business=business,
+                                   input_fingerprint=input_fingerprint)
                     with counter_lock:
                         counter["done"] += 1
                         _report(log, counter["done"], total, row)

@@ -12,6 +12,10 @@ run without an edit to the code:
 
 import os
 
+# Bump this when evidence, detection or scoring semantics change. Cache and
+# journal records from any other version are preserved but not reused.
+PIPELINE_SCHEMA_VERSION = 1
+
 
 def _int(name, default):
     """Read an integer from the environment. Use the default if it is absent."""
