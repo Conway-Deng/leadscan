@@ -23,8 +23,10 @@ model rests on.
 import urllib.parse
 import urllib.robotparser
 
-# One parser per host, so `robots.txt` is fetched once per site and not once
-# per page.
+import url_safety
+
+# One parser per host and mode, so `robots.txt` is fetched once per site and not once
+# per page, keeping public and default modes isolated.
 _CACHE = {}
 _CACHE_LIMIT = 2000
 
@@ -40,7 +42,13 @@ def _robots_url(url):
     return f"{parts.scheme}://{parts.netloc}/robots.txt", parts.netloc.lower()
 
 
-def may_fetch(url, user_agent="*", timeout=8):
+def may_fetch(
+    url,
+    user_agent="*",
+    timeout=8,
+    public_only=False,
+    resolver=None,
+):
     """
     True when `robots.txt` allows this URL.
 
@@ -51,12 +59,20 @@ def may_fetch(url, user_agent="*", timeout=8):
     if not robots_url:
         return True
 
-    if host in _CACHE:
-        parser = _CACHE[host]
+    if public_only:
+        url_safety.resolve_public_url(robots_url, resolver=resolver)
+
+    cache_key = (host, bool(public_only))
+    if cache_key in _CACHE:
+        parser = _CACHE[cache_key]
     else:
-        parser = _read(robots_url, timeout)
+        if public_only:
+            parser = _read_public(robots_url, timeout, resolver=resolver)
+        else:
+            parser = _read(robots_url, timeout)
         if len(_CACHE) < _CACHE_LIMIT:
-            _CACHE[host] = parser
+            _CACHE[cache_key] = parser
+
     if parser is None:
         return True
 
@@ -87,3 +103,65 @@ def _read(robots_url, timeout):
     except Exception:
         return None
     return parser
+
+
+def _read_public(
+    robots_url,
+    timeout,
+    resolver=None,
+    getter=None,
+    max_redirects=5,
+):
+    """
+    Fetch robots.txt safely in public/hosted mode with redirect validation.
+
+    SECURITY NOTE:
+    Public robots mode:
+    * validates every redirect hop before connecting;
+    * disables automatic redirects;
+    * rejects any hostname resolving to a non-global IP.
+    However, DNS validation vs actual socket connection retains the same DNS TOCTOU
+    boundary as the browser layer, so restricted network egress remains required.
+    """
+    import requests
+
+    fetch = getter or requests.get
+    current_url = robots_url
+    redirects = 0
+
+    while True:
+        url_safety.resolve_public_url(
+            current_url,
+            resolver=resolver,
+        )
+
+        try:
+            response = fetch(
+                current_url,
+                timeout=timeout,
+                headers={"User-Agent": "LeadScan"},
+                allow_redirects=False,
+            )
+        except (requests.RequestException, OSError):
+            return None
+
+        if response.status_code in (301, 302, 303, 307, 308):
+            redirects += 1
+            if redirects > max_redirects:
+                return None
+            location = response.headers.get("Location")
+            if not location:
+                return None
+            current_url = urllib.parse.urljoin(current_url, location.strip())
+            continue
+
+        if response.status_code != 200 or not response.text:
+            return None
+
+        parser = urllib.robotparser.RobotFileParser()
+        parser.set_url(current_url)
+        try:
+            parser.parse(response.text.splitlines())
+        except Exception:
+            return None
+        return parser

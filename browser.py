@@ -25,6 +25,7 @@ import config
 import deadlines
 import detect
 import robots
+import url_safety
 
 # Instagram and TikTok put the follower count in the og:description meta tag.
 _OG_DESCRIPTION = re.compile(
@@ -70,7 +71,14 @@ def followers_from_html(html):
 class Browser:
     """One browser for the whole run. Faster and more stable than one per site."""
 
-    def __init__(self, polite_delay=None, log=None, respect_robots=None):
+    def __init__(
+        self,
+        polite_delay=None,
+        log=None,
+        respect_robots=None,
+        enforce_public_browser_requests=False,
+        public_resolver=None,
+    ):
         self.polite_delay = (
             config.POLITE_DELAY_SECONDS if polite_delay is None else polite_delay
         )
@@ -78,6 +86,8 @@ class Browser:
         self.respect_robots = (
             config.RESPECT_ROBOTS if respect_robots is None else respect_robots
         )
+        self.enforce_public_browser_requests = bool(enforce_public_browser_requests)
+        self.public_resolver = public_resolver
         self.deadline = None
         self._last_hit_by_host = {}
 
@@ -88,12 +98,110 @@ class Browser:
     def __enter__(self):
         self._playwright = sync_playwright().start()
         self.browser = self._playwright.chromium.launch(headless=True)
-        self.context = self.browser.new_context(
-            user_agent=config.USER_AGENT,
-            viewport={"width": 1366, "height": 900},
-            locale="en-SG",
-        )
+        context_kwargs = {
+            "user_agent": config.USER_AGENT,
+            "viewport": {"width": 1366, "height": 900},
+            "locale": "en-SG",
+        }
+        if self.enforce_public_browser_requests:
+            context_kwargs["service_workers"] = "block"
+        self.context = self.browser.new_context(**context_kwargs)
+        if self.enforce_public_browser_requests:
+            self._install_public_websocket_guard()
         return self
+
+    def _block_public_websocket(self, websocket):
+        """
+        Keep routed WebSockets entirely inside Playwright in public mode.
+
+        Intentionally do NOT call connect_to_server(), because a routed
+        WebSocket does not connect to the real server unless that method
+        is called.
+
+        Also do NOT call websocket.close() here. Real sync-mode verification
+        showed that closing synchronously from this callback can deadlock
+        while page navigation is in progress.
+        """
+        return None
+
+    def _install_public_websocket_guard(self):
+        self.context.route_web_socket(
+            re.compile(r"^wss?://", re.I),
+            self._block_public_websocket,
+        )
+
+    def _new_page(self):
+        page = self.context.new_page()
+        if self.enforce_public_browser_requests:
+            self._install_public_cdp_guard(page)
+        return page
+
+    def _handle_public_cdp_request(self, session, params):
+        request_id = params["requestId"]
+        url = params["request"]["url"]
+
+        if not url.lower().startswith(("http://", "https://")):
+            session.send(
+                "Fetch.continueRequest",
+                {"requestId": request_id},
+            )
+            return
+
+        try:
+            url_safety.resolve_public_url(
+                url,
+                resolver=self.public_resolver,
+            )
+        except url_safety.UnsafeURL:
+            session.send(
+                "Fetch.failRequest",
+                {
+                    "requestId": request_id,
+                    "errorReason": "BlockedByClient",
+                },
+            )
+            return
+
+        session.send(
+            "Fetch.continueRequest",
+            {"requestId": request_id},
+        )
+
+    def _install_public_cdp_guard(self, page):
+        """
+        Attach a Chromium CDP session to intercept all HTTP(S) requests via Fetch.
+
+        SECURITY NOTE:
+        The public Browser mode:
+        * validates Chromium HTTP(S) requests with CDP Fetch;
+        * re-checks redirect hops;
+        * protects normal subresources;
+        * disables service workers;
+        * routes all ws:// / wss:// locally without connecting to the server;
+        * public-safe robots fetching is separately enforced.
+
+        REMAINING LIMITATION:
+        * DNS validation vs actual socket connection retains a DNS-rebinding / TOCTOU boundary;
+        * Production deployment MUST restrict network egress to private/internal/metadata destinations
+          as defense in depth.
+        """
+        session = self.context.new_cdp_session(page)
+        session.on(
+            "Fetch.requestPaused",
+            lambda params: self._handle_public_cdp_request(session, params),
+        )
+        session.send(
+            "Fetch.enable",
+            {
+                "patterns": [
+                    {
+                        "urlPattern": "*",
+                        "requestStage": "Request",
+                    }
+                ]
+            },
+        )
+        return session
 
     def __exit__(self, *exc):
         # Close each resource on its own. A failure in one must not leak the
@@ -156,9 +264,24 @@ class Browser:
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
 
-        robots_timeout = budget.cap_seconds(8) if budget else 8
-        if self.respect_robots and not robots.may_fetch(url, timeout=robots_timeout):
-            return None, url, None, "blocked by robots.txt"
+        if self.respect_robots:
+            robots_timeout = budget.cap_seconds(8) if budget else 8
+            try:
+                allowed = robots.may_fetch(
+                    url,
+                    timeout=robots_timeout,
+                    public_only=self.enforce_public_browser_requests,
+                    resolver=(
+                        self.public_resolver
+                        if self.enforce_public_browser_requests
+                        else None
+                    ),
+                )
+            except url_safety.UnsafeURL:
+                return None, url, None, "unsafe URL blocked"
+
+            if not allowed:
+                return None, url, None, "blocked by robots.txt"
 
         timeouts = [config.NAV_TIMEOUT_MS] + [config.RETRY_TIMEOUT_MS] * config.RENDER_RETRIES
         last_error = "unreachable"
@@ -180,7 +303,7 @@ class Browser:
         return None, url, None, last_error
 
     def _render_once(self, url, timeout_ms, deadline=None):
-        page = self.context.new_page()
+        page = self._new_page()
         try:
             start = time.time()
             if deadline:
@@ -227,7 +350,7 @@ class Browser:
         if not profile_url:
             return None
         self._wait_politely(profile_url, deadline=budget)
-        page = self.context.new_page()
+        page = self._new_page()
         try:
             timeout = (budget.cap_milliseconds(config.NAV_TIMEOUT_MS)
                        if budget else config.NAV_TIMEOUT_MS)
@@ -261,7 +384,7 @@ class Browser:
         query = f"{name} {region} instagram tiktok".strip()
         url = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote_plus(query)
         self._wait_politely(url, deadline=budget)
-        page = self.context.new_page()
+        page = self._new_page()
         try:
             timeout = (budget.cap_milliseconds(config.NAV_TIMEOUT_MS)
                        if budget else config.NAV_TIMEOUT_MS)
