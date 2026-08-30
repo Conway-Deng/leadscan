@@ -278,11 +278,15 @@ def main(argv=None):
         stem, _ = os.path.splitext(args.out)
         journal_path = stem + ".journal.jsonl"
 
-    results = audit_all(businesses, social_only=args.social_only, cache=store,
-                        log=log, workers=args.workers, deep=not args.shallow,
-                        journal_path=journal_path,
-                        respect_robots=not args.ignore_robots,
-                        resume_journal=not args.no_cache)
+    try:
+        results = audit_all(businesses, social_only=args.social_only, cache=store,
+                            log=log, workers=args.workers, deep=not args.shallow,
+                            journal_path=journal_path,
+                            respect_robots=not args.ignore_robots,
+                            resume_journal=not args.no_cache)
+    except runner.AuditRunError as error:
+        log(f"Audit failed: {error}")
+        return 1
 
     # --- Write the call sheet ---
     leads = report.select_leads(results, args.want, include_cool=args.include_cool)

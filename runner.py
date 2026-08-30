@@ -33,6 +33,10 @@ import compatibility
 import config
 
 
+class AuditRunError(RuntimeError):
+    """The worker pool could not complete the audit run."""
+
+
 def business_key(business):
     """A stable name for one business, used by the journal to skip repeats."""
     place_id = (business.get("place_id") or "").strip()
@@ -146,13 +150,17 @@ def run_audits(businesses, social_only=False, cache=None, log=print,
 
     counter = {"done": 0}
     counter_lock = threading.Lock()
+    worker_state = {"started": 0}
+    worker_state_lock = threading.Lock()
     total = len(todo)
 
     def worker(worker_number):
-        from browser import Browser
         try:
+            from browser import Browser
             with Browser(log=lambda m: None,
                          respect_robots=respect_robots) as browser:
+                with worker_state_lock:
+                    worker_state["started"] += 1
                 while True:
                     try:
                         index, key, input_fingerprint, business = work.get_nowait()
@@ -188,6 +196,16 @@ def run_audits(businesses, social_only=False, cache=None, log=print,
     except KeyboardInterrupt:
         log("\nStopped. Everything finished so far is in the journal. "
             "Run the same command again to carry on.")
+
+    remaining = sum(1 for index, *_rest in todo if results[index] is None)
+    if worker_state["started"] == 0:
+        raise AuditRunError(
+            "No audit workers could start. Check the browser installation "
+            "and retry; completed journal rows were preserved.")
+    if remaining:
+        raise AuditRunError(
+            f"Audit stopped with {remaining} business(es) unprocessed. "
+            "Check the worker errors and retry; completed journal rows were preserved.")
     return [row for row in results if row]
 
 

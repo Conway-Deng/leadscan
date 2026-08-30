@@ -6,7 +6,10 @@ exclusion list. These are the parts added after the first hardening pass.
 import json
 import os
 import sys
+import threading
 import types
+
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -209,6 +212,12 @@ def _install_fake_audit(monkeypatch, audited):
     monkeypatch.setattr(runner.checks, "audit_business", fake_audit)
 
 
+def _install_browser(monkeypatch, browser_class):
+    browser_module = types.ModuleType("browser")
+    browser_module.Browser = browser_class
+    monkeypatch.setitem(sys.modules, "browser", browser_module)
+
+
 def test_current_version_journal_records_and_replays(tmp_path):
     path = str(tmp_path / "run.jsonl")
     alpha = {"place_id": "A", "name": "Alpha"}
@@ -384,6 +393,138 @@ def test_missing_and_old_version_journal_rows_are_reaudited(tmp_path, monkeypatc
     assert all(record["_pipeline_version"] == config.PIPELINE_SCHEMA_VERSION
                for record in current.values())
     assert len(path.read_text(encoding="utf-8").splitlines()) == 4
+
+
+# ---------------------------------------------------------------------------
+# Fatal worker failures
+# ---------------------------------------------------------------------------
+
+def test_every_browser_worker_failing_to_start_is_fatal(monkeypatch):
+    class BrokenBrowser:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            raise RuntimeError("browser executable missing")
+
+        def __exit__(self, *_args):
+            return None
+
+    _install_browser(monkeypatch, BrokenBrowser)
+    businesses = [{"place_id": str(index), "name": f"Firm {index}"}
+                  for index in range(3)]
+
+    with pytest.raises(runner.AuditRunError,
+                       match="No audit workers could start"):
+        runner.run_audits(businesses, workers=3, log=lambda _message: None)
+
+
+def test_one_worker_may_fail_if_another_finishes_every_business(monkeypatch):
+    starts = {"count": 0}
+    start_lock = threading.Lock()
+
+    class SometimesBrokenBrowser:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            with start_lock:
+                starts["count"] += 1
+                attempt = starts["count"]
+            if attempt == 1:
+                raise RuntimeError("one browser failed")
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    _install_browser(monkeypatch, SometimesBrokenBrowser)
+    audited = []
+
+    def fake_audit(_browser, business, cache=None, deep=True):
+        audited.append(business["place_id"])
+        return {"name": business["name"], "score": 70, "tier": "hot",
+                "warm": True, "disqualified": False}
+
+    monkeypatch.setattr(runner.checks, "audit_business", fake_audit)
+    businesses = [{"place_id": str(index), "name": f"Firm {index}"}
+                  for index in range(4)]
+
+    rows = runner.run_audits(businesses, workers=2, log=lambda _message: None)
+
+    assert len(rows) == 4
+    assert sorted(audited) == ["0", "1", "2", "3"]
+
+
+def test_unprocessed_businesses_are_fatal_and_completed_journal_rows_survive(
+        tmp_path, monkeypatch):
+    audited = []
+    _install_fake_audit(monkeypatch, audited)
+    path = str(tmp_path / "run.jsonl")
+    businesses = [{"place_id": "A", "name": "Alpha"},
+                  {"place_id": "B", "name": "Beta"}]
+
+    def failing_progress_log(message):
+        if message.startswith("  ["):
+            raise RuntimeError("progress output failed")
+
+    with pytest.raises(runner.AuditRunError, match="1 business.*unprocessed"):
+        runner.run_audits(businesses, workers=1, log=failing_progress_log,
+                          journal_path=path)
+
+    records = runner.Journal(path).done_keys()
+    assert len(records) == 1
+    assert next(iter(records.values()))["name"] == "Alpha"
+    assert len((tmp_path / "run.jsonl").read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_per_business_failure_remains_an_isolated_error_row(monkeypatch):
+    audited = []
+    _install_fake_audit(monkeypatch, audited)
+
+    def sometimes_fails(_browser, business, cache=None, deep=True):
+        if business["place_id"] == "A":
+            raise RuntimeError("site-specific render failure")
+        return {"name": business["name"], "score": 70, "tier": "hot",
+                "warm": True, "disqualified": False}
+
+    monkeypatch.setattr(runner.checks, "audit_business", sometimes_fails)
+    rows = runner.run_audits(
+        [{"place_id": "A", "name": "Alpha"},
+         {"place_id": "B", "name": "Beta"}],
+        workers=1, log=lambda _message: None)
+
+    assert len(rows) == 2
+    assert rows[0]["status"] == "scan failed"
+    assert "site-specific render failure" in rows[0]["reasons"]
+    assert rows[1]["name"] == "Beta"
+
+
+def test_cli_fatal_audit_writes_no_outputs(tmp_path, monkeypatch, capsys):
+    source = tmp_path / "businesses.csv"
+    source.write_text("place_id,name,website\nA,Alpha,https://alpha.sg\n",
+                      encoding="utf-8")
+    output = tmp_path / "leads.csv"
+    reports = tmp_path / "reports"
+    crm = tmp_path / "crm.csv"
+
+    def fatal_audit(*_args, **_kwargs):
+        raise runner.AuditRunError(
+            "No audit workers could start. Check the browser installation and retry.")
+
+    monkeypatch.setattr(leadscan, "audit_all", fatal_audit)
+    result = leadscan.main([
+        "--input", str(source), "--no-cache", "--out", str(output),
+        "--reports", str(reports), "--crm", str(crm),
+    ])
+
+    assert result != 0
+    assert "Audit failed: No audit workers could start" in capsys.readouterr().out
+    assert not output.exists()
+    assert not output.with_suffix(".html").exists()
+    assert not output.with_suffix(".xlsx").exists()
+    assert not reports.exists()
+    assert not crm.exists()
 
 
 # ---------------------------------------------------------------------------
