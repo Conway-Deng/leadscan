@@ -56,7 +56,7 @@ pain — the entire premise of the product — rarely applied.
 
 Now a capture method must be a real one: a `<form>` with a contact field (and
 not a search, newsletter or login form), a hosted booking tool (Calendly,
-Auity, Fresha, Vagaro, HubSpot, Typeform, Jotform, a chat widget), a WhatsApp
+Acuity, Fresha, Vagaro, HubSpot, Typeform, Jotform, a chat widget), a WhatsApp
 click-to-chat link, a `tel:` link or a `mailto:` link. The words alone no longer
 count.
 
@@ -219,7 +219,7 @@ findings.
 
 In the Google Maps lead-tool category, **ad pixel detection is offered by
 nobody**, and website technology detection by nobody either. Those tools
-compate on volume of rows and on email enrichment. LeadScan's differentiator is
+compete on volume of rows and on email enrichment. LeadScan's differentiator is
 that it can identify installed advertising infrastructure alongside a broken
 funnel. It states exactly which tag it saw; whether a campaign is currently
 live still requires a separate evidence source.
