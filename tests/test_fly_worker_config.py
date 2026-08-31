@@ -60,7 +60,6 @@ def test_fly_worker_config_forbidden_features():
     content = FLY_CONFIG.read_text(encoding="utf-8")
 
     forbidden_patterns = [
-        "[[mounts]]",
         "[[volumes]]",
         "release_command",
         "entrypoint",
@@ -75,6 +74,24 @@ def test_fly_worker_config_forbidden_features():
     ]
     for pattern in forbidden_patterns:
         assert pattern not in content
+
+
+def test_fly_worker_config_private_persistent_lead_volume():
+    content = FLY_CONFIG.read_text(encoding="utf-8")
+
+    assert 'LEADSCAN_LEAD_DB_PATH = "/data/leadscan-public-leads.sqlite3"' in content or "LEADSCAN_LEAD_DB_PATH = '/data/leadscan-public-leads.sqlite3'" in content
+    assert 'source = "leadscan_data"' in content or "source = 'leadscan_data'" in content
+    assert 'destination = "/data"' in content or "destination = '/data'" in content
+    assert 'persist_rootfs = "never"' in content or "persist_rootfs = 'never'" in content
+    assert "initial_size" not in content
+
+    # Only one mount destination /data
+    assert content.count('destination = "/data"') + content.count("destination = '/data'") == 1
+
+    # Warning comments regarding single-machine and non-replicated SQLite
+    lower_content = content.lower()
+    assert "one machine" in lower_content
+    assert "not replicated" in lower_content or "replicated" in lower_content
 
 
 def test_network_policy_egress_json_structure():

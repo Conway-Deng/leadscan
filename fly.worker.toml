@@ -9,6 +9,18 @@ kill_timeout = 120
 [build]
   dockerfile = "Dockerfile.worker"
 
+[env]
+  LEADSCAN_LEAD_DB_PATH = "/data/leadscan-public-leads.sqlite3"
+
+# Persistent volume for public lead SQLite database.
+# Operational Constraints:
+# 1. 'leadscan_data' volume must be provisioned in the same region (sin) before deployment.
+# 2. SQLite storage requires running exactly one Machine; Fly volumes are per-Machine and not replicated.
+# 3. This repository configuration does not provision the volume.
+[mounts]
+  source = "leadscan_data"
+  destination = "/data"
+
 [http_service]
   internal_port = 8080
   force_https = true

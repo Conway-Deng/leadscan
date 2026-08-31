@@ -112,25 +112,71 @@ def test_firewall_order_established_and_dns_exceptions():
     assert est_pos < block_pos
 
 
-
 def test_start_worker_script_order_and_privilege_drop():
     content = START_SCRIPT.read_text(encoding="utf-8")
 
     assert "set -eu" in content
     assert "id -u" in content
     assert "apply-egress-firewall.sh" in content
+    assert "/proc/mounts" in content
+    assert 'chown pwuser:pwuser "$LEAD_DATA_DIR"' in content
+    assert 'chmod 0700 "$LEAD_DATA_DIR"' in content
+    assert 'gosu pwuser:pwuser test -w "$LEAD_DATA_DIR"' in content
     assert "exec gosu pwuser:pwuser" in content
 
-    # Firewall must run before gosu
+    # Lifecycle order
     fw_pos = content.find("apply-egress-firewall.sh")
+    mount_pos = content.find("/proc/mounts")
+    chown_pos = content.find('chown pwuser:pwuser "$LEAD_DATA_DIR"')
+    write_pos = content.find('gosu pwuser:pwuser test -w "$LEAD_DATA_DIR"')
     gosu_pos = content.find("exec gosu pwuser:pwuser")
-    assert fw_pos != -1 and gosu_pos != -1
-    assert fw_pos < gosu_pos
+
+    assert fw_pos != -1 and mount_pos != -1 and chown_pos != -1 and write_pos != -1 and gosu_pos != -1
+    assert fw_pos < mount_pos < chown_pos < write_pos < gosu_pos
 
     # Required uvicorn flags
     assert "--workers 1" in content
     assert "--no-proxy-headers" in content
     assert "--no-server-header" in content
     assert "--timeout-graceful-shutdown 120" in content
-
     assert "--reload" not in content
+
+
+def test_start_worker_requires_private_mounted_lead_directory():
+    content = START_SCRIPT.read_text(encoding="utf-8")
+
+    assert "LEADSCAN_LEAD_DB_PATH" in content
+    assert "/data/leadscan-public-leads.sqlite3" in content
+    assert "/proc/mounts" in content
+    assert "exit 1" in content
+
+    # Ownership and writability
+    assert 'chown pwuser:pwuser "$LEAD_DATA_DIR"' in content
+    assert 'chmod 0700 "$LEAD_DATA_DIR"' in content
+    assert "gosu pwuser:pwuser test -w" in content
+
+    # Path safety: symbolic links and non-regular files rejected
+    assert "-L" in content
+    assert "! -f" in content
+
+    # Forbid ephemeral fallback, recursive permissions, and startup DB creation
+    forbidden_tokens = [
+        "mkdir -p /data",
+        'mkdir -p "$LEAD_DATA_DIR"',
+        "chown -R",
+        "chmod -R",
+    ]
+    for token in forbidden_tokens:
+        assert token not in content
+
+    # Ensure no invocation of touch or sqlite3 command
+    lines = [line.strip() for line in content.splitlines() if not line.strip().startswith("#")]
+    for line in lines:
+        assert not line.startswith("touch "), f"Unexpected touch invocation: {line}"
+        assert not line.startswith("sqlite3 "), f"Unexpected sqlite3 invocation: {line}"
+        assert "touch " not in line
+        assert "sqlite3 " not in line
+
+    # Ensure no root chown against the database file itself
+    assert 'chown pwuser:pwuser "$EXPECTED_LEAD_DB_PATH"' not in content
+    assert 'chown pwuser:pwuser "$LEADSCAN_LEAD_DB_PATH"' not in content
