@@ -150,6 +150,58 @@ states its own limits survives.
 A firm with no website, or one whose site did not load, gets no report. There
 is nothing to review, and "you have no website" is a worse opening than a call.
 
+## Hosted public audit widget
+
+LeadScan also includes an independently deployable public website review widget:
+
+1. A visitor opens the static LeadScan frontend (`site/index.html`).
+2. The visitor enters their website address, optional contact name, and required work email.
+3. The frontend sends a strict three-field request body (`url`, `contact_name`, `email`) to `/api/audit`.
+4. The worker audits the submitted website in an isolated headless browser pipeline (`public_audit.py`).
+5. Lead details are validated and saved to private SQLite storage (`lead_capture.py`).
+6. Only after successful lead persistence is the review report returned in the response.
+7. The visitor receives their score, tier, suggested opening line, and an interactive preview rendered inside a sandboxed iframe.
+
+### Frontend components
+
+* `site/index.html`, `site/app.js`, `site/styles.css`: Static frontend assets without build tools or external script frameworks.
+* `netlify.toml`: Netlify deployment headers, Content Security Policy, and caching directives.
+* `site/index.html` contains `<meta name="leadscan-api-origin" content="">`. When blank, the client requests same-origin `/api/audit`. When configured with an exact worker origin, it directs audit requests to that worker while always appending the fixed `/api/audit` path. Arbitrary API paths cannot be configured from the frontend.
+
+### Worker API & private lead storage
+
+* `public_api.py`: FastAPI application serving strictly `POST /api/audit` (automatic OpenAPI/docs endpoints disabled).
+* Requires the exact three-field schema (`url`, `contact_name`, `email`). Requests without contact details are rejected before auditing.
+* `lead_capture.py`: Private SQLite store recording visitor contact details, timestamp, and audited URL. SQLite runs with WAL mode, busy timeout, and private file mode enforcement. It provides no public read endpoint.
+* Worker CORS middleware validates and allows strictly one exact HTTPS origin via `LEADSCAN_ALLOWED_ORIGIN`. Wildcard origins (`*`) and credentials are not permitted. CORS is a browser transport control only and is not treated as authentication.
+
+### Manual production wiring
+
+Production deployment is deliberately manual; the repository does not commit real production hostnames. When deploying the frontend to Netlify and the worker to Fly:
+
+1. **Frontend HTML (`site/index.html`)**: Set `meta[name="leadscan-api-origin"]` content to the exact HTTPS origin of the deployed worker.
+2. **Netlify CSP (`netlify.toml`)**: Replace `https://leadscan-worker.example.invalid` in the `connect-src` header with the SAME exact worker HTTPS origin.
+3. **Worker Environment**: Set `LEADSCAN_ALLOWED_ORIGIN` in the worker environment to the exact public HTTPS origin of the Netlify site. Do not use wildcard origins.
+
+### Persistent lead storage configuration
+
+* `fly.worker.toml` configures persistent storage via volume `leadscan_data` mounted at `/data`, setting `LEADSCAN_LEAD_DB_PATH=/data/leadscan-public-leads.sqlite3`.
+* `deploy/fly/start-worker.sh` enforces that `/data` is an active mount point before starting the worker, failing closed if missing, and runs Uvicorn as unprivileged `pwuser`.
+* SQLite deployment is designed for **one worker Machine**; Fly volumes are per-Machine and not a shared/replicated multi-Machine database.
+* The repository contains deployment-ready configuration, but no live Fly volume, runtime attachment, or production deployment is verified by this repository state.
+
+### Still requires live deployment verification
+
+The following items are operational deployment verification steps that must be validated in actual hosting environments:
+
+* Provision and attach the persistent volume on Fly.
+* Verify `/data` ownership and write permissions on the running Fly worker.
+* Verify worker egress firewall / netfilter capability in the hosting container runtime.
+* Replace placeholder worker hostnames with production hostnames in `site/index.html` and `netlify.toml`.
+* Configure `LEADSCAN_ALLOWED_ORIGIN` on the worker with the production frontend hostname.
+* Verify real cross-origin requests from Netlify to the Fly worker.
+* Verify captured leads survive worker Machine restarts and redeployments.
+
 ## The first message
 
 Every lead in the CSV comes with a WhatsApp opener, an email subject and an
@@ -232,8 +284,13 @@ python -m pip install -r requirements-dev.txt
 python -m pytest tests/ -q
 ```
 
-151 tests. None of them needs a browser, a key or a network connection.
-They run in under a second and gate every push through GitHub Actions.
+The test suite covers CLI scanning, scoring rules, report generation, public API rate limiting, concurrency gates, SQLite lead capture, frontend static validation, and real Chromium browser execution:
+
+* Unit and static security tests execute locally via `pytest`. Platform-specific permission checks skip automatically where unsupported (e.g. Windows file mode checks).
+* GitHub Actions runs tests across Python 3.10 and 3.12 on Ubuntu.
+* A separate CI job runs real Chromium browser integration tests using Playwright.
+* A worker-container CI job builds `Dockerfile.worker` and verifies container entrypoint, file structure, and non-root Chromium execution.
+* CI requires no external API keys or network services.
 
 To try the whole pipeline end to end with no key and no internet:
 
@@ -265,6 +322,14 @@ reported as broken), and a parked domain.
 | `cache.py` | The resumable disk cache. |
 | `robots.py` | Reads `robots.txt` and obeys it. |
 | `audit_report.py` | The branded one-page review you send the prospect. |
+| `public_api.py` | FastAPI transport layer and rate-limited endpoint for `/api/audit`. |
+| `public_audit.py` | Single-site audit runner, URL safety checks, and report generator. |
+| `lead_capture.py` | Private SQLite lead storage with fail-closed schema and permissions. |
+| `site/` | Static public website review frontend (HTML, CSS, JS). |
+| `netlify.toml` | Netlify static headers, security headers, and CSP connect-src policy. |
+| `Dockerfile.worker` | Production container image for unprivileged worker and Chromium. |
+| `fly.worker.toml` | Fly worker VM configuration, persistent mount, and resource limits. |
+| `deploy/fly/` | Worker startup script, egress firewall, and network policies. |
 | `outreach.py` | The first message, and the CRM-shaped export. |
 | `verify.py` | Grades an email address before you use it. |
 | `adlibrary.py` | Optional Meta Ad Library check. **Read the note at the top.** |

@@ -1,6 +1,6 @@
 # HANDOFF — LeadScan
 
-Last updated: 2026-08-17 (v4)
+Last updated: 2026-08-31
 
 ## The idea in one line
 
@@ -56,7 +56,7 @@ pain — the entire premise of the product — rarely applied.
 
 Now a capture method must be a real one: a `<form>` with a contact field (and
 not a search, newsletter or login form), a hosted booking tool (Calendly,
-Acuity, Fresha, Vagaro, HubSpot, Typeform, Jotform, a chat widget), a WhatsApp
+Auity, Fresha, Vagaro, HubSpot, Typeform, Jotform, a chat widget), a WhatsApp
 click-to-chat link, a `tel:` link or a `mailto:` link. The words alone no longer
 count.
 
@@ -113,9 +113,8 @@ list with filters and clickable links. The CSV stays as the record.
 * **Resumable cache** (`.leadscan-cache/`, 7 days). A sweep that stops halfway
   costs nothing to restart. `--no-cache` and `--clear-cache` control it.
 * **Polite delays.** One second between sites, configurable.
-* **82 tests**, none needing a browser, a key or a network connection, plus a
-  local fixture site (`tests/fixtures/serve.py`) that exercises the whole
-  pipeline end to end offline.
+* **Unit and regression tests**, plus a local fixture site (`tests/fixtures/serve.py`)
+  that exercises the pipeline end to end offline.
 * **One failing site no longer stops the run.** The error is logged and the
   sweep continues.
 * `--log PATH` writes a timestamped run log.
@@ -182,9 +181,10 @@ returns a different branch name or a differently formatted phone number.
 
 ### 12. Continuous integration
 
-`.github/workflows/tests.yml` runs the 107 tests on Python 3.10 and 3.12 for
-every push, and fails the build if a Google API key pattern or a tracked `.env`
-ever reaches the repository.
+`.github/workflows/tests.yml` runs test jobs across Python 3.10 and 3.12,
+executes real Playwright browser integration tests, builds the Docker worker container,
+and fails the build if a Google API key pattern or a tracked `.env` ever reaches
+the repository.
 
 ### 13. robots.txt is now read and obeyed
 
@@ -219,7 +219,7 @@ findings.
 
 In the Google Maps lead-tool category, **ad pixel detection is offered by
 nobody**, and website technology detection by nobody either. Those tools
-compete on volume of rows and on email enrichment. LeadScan's differentiator is
+compate on volume of rows and on email enrichment. LeadScan's differentiator is
 that it can identify installed advertising infrastructure alongside a broken
 funnel. It states exactly which tag it saw; whether a campaign is currently
 live still requires a separate evidence source.
@@ -277,11 +277,6 @@ mailbox-level certainty, pay a service for the final list.
 
 ### What the competitors have that LeadScan still does not
 
-* **An embeddable audit widget.** Insites, Woorank, SEOptimer and SE Ranking all
-  sell one: a form on the agency's own site where a visitor types their URL and
-  gets a report, which captures the visitor as a lead. `--audit URL` is the
-  local half of this. The missing half is hosting, and that is a real product
-  decision, not an afternoon's work.
 * **Rank tracking and citation management** (BrightLocal, SE Ranking). Out of
   scope, and `Localrank-MVP` in this same portfolio already covers the rank-grid
   idea.
@@ -361,6 +356,36 @@ lead, and you can say exactly what you saw.
 * **Scraping Instagram or TikTok while logged in** — breaks their terms of
   service and puts the account at risk. The best-effort logged-out read stays
   best-effort, and the Google review count carries the "quiet" signal.
+
+---
+
+## Hosted audit widget — current state (2026-08-31)
+
+This work closes the major product gap identified in v4: allowing a prospective client to visit the agency's website, enter their URL, receive an instant branded review, and be captured as an inbound lead with their contact details stored privately before the report is returned.
+
+### Completed in code (deployment-ready)
+
+* **Static public frontend** (`site/`): Pure HTML/CSS/JS without build tools or external script dependencies. Collects website URL, optional contact name, and required work email with clear privacy notice.
+* **Exact three-field API contract**: `POST /api/audit` strictly requires `url`, `contact_name`, and `email`. Legacy URL-only bypass is completely removed.
+* **Fail-closed lead capture**: Lead details are validated and saved to private SQLite storage before returning the audit report. Storage failures return 500 (`lead_capture_failed`) without leaking report HTML.
+* **Private SQLite lead store** (`lead_capture.py`): SQLite schema with WAL mode, busy timeout, and fail-closed permission enforcement. No public read API.
+* **Exact HTTPS CORS origin**: FastAPI `CORSMiddleware` configured to allow strictly one exact HTTPS frontend origin (`LEADSCAN_ALLOWED_ORIGIN`), with wildcards forbidden. CORS is a browser transport permission only, not authentication.
+* **Configurable frontend worker origin**: `site/index.html` meta tag `leadscan-api-origin` defaults to same-origin `/api/audit` when blank and normalizes valid HTTPS origins. Frontend always appends fixed `/api/audit`.
+* **Exact Netlify CSP**: `netlify.toml` configures `connect-src 'self' https://leadscan-worker.example.invalid;` with manual deployment comments.
+* **Persistent Fly volume wiring**: `fly.worker.toml` configures persistent mount `leadscan_data` to `/data` with `LEADSCAN_LEAD_DB_PATH=/data/leadscan-public-leads.sqlite3`. Startup script enforces mount presence and drops root privileges to `pwuser`.
+* **Single-Machine SQLite architecture**: Current inbound lead storage uses SQLite on a per-Machine Fly volume, requiring deployment with exactly one worker Machine. Horizontal scaling requires migrating to a shared database.
+* **Multi-tier security boundaries**: 4 KiB request body limit, fast envelope rate limiter, service audit rate limiter, concurrency gate (2 concurrent audits), SSRF / private IP blocking, 105s audit HTTP wait timeout, and 384 KiB response cap.
+* **Full test automation**: Fast unit tests, real Chromium frontend integration tests with intercepted cross-origin flows, Docker worker container build, non-root Chromium launch smoke tests, and secret-pattern CI checks.
+
+### Not verified live / deployer action
+
+The hosted widget is implemented and deployment-ready in the repository; live deployment remains an operator step:
+
+* No live Fly app, Machine, IP, secret, or volume has been created by this repository work.
+* No live Netlify site or production DNS hostname has been configured.
+* Fly persistent volume runtime attachment and permissions have not been verified live on cloud infrastructure.
+* Worker egress firewall / netfilter capability has not been verified in actual Fly runtime.
+* Real cross-origin Netlify-to-worker requests and durable lead survival across redeployment have not been tested live.
 
 ---
 
