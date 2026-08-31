@@ -257,3 +257,53 @@ def test_sqlite_lead_files_are_gitignored():
     assert "*.sqlite3-wal" in gitignore_text
     assert "*.sqlite3-shm" in gitignore_text
     assert "*.jsonl" in gitignore_text
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission semantics")
+def test_existing_database_permissions_are_tightened_to_0600(tmp_path):
+    db_path = tmp_path / "leads.sqlite3"
+    db_path.write_bytes(b"")
+    os.chmod(db_path, 0o644)
+    assert os.stat(db_path).st_mode & 0o777 == 0o644
+
+    store = SQLiteLeadStore(db_path)
+    row_id = store.save_lead(
+        contact_name="Test User",
+        email="test@example.com",
+        website_url="https://example.com",
+    )
+    assert row_id > 0
+    assert os.stat(db_path).st_mode & 0o777 == 0o600
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission semantics")
+def test_permission_hardening_failure_fails_closed(tmp_path, monkeypatch):
+    db_path = tmp_path / "leads.sqlite3"
+    db_path.write_bytes(b"")
+
+    name = "Secret Owner"
+    email = "secret_owner@example.com"
+    url = "https://secret.example.com"
+
+    def fail_chmod(_path, _mode):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(os, "chmod", fail_chmod)
+
+    store = SQLiteLeadStore(db_path)
+    with pytest.raises(LeadStoreError) as exc_info:
+        store.save_lead(contact_name=name, email=email, website_url=url)
+
+    err_msg = str(exc_info.value)
+    assert err_msg == "Failed to store lead"
+    assert name not in err_msg
+    assert email not in err_msg
+    assert url not in err_msg
+    assert "permission denied" not in err_msg
+    assert store._initialized is False
+
+
+def test_posix_permission_enforcement_does_not_swallow_chmod_errors():
+    source_text = Path("lead_capture.py").read_text(encoding="utf-8")
+    assert "os.chmod" in source_text
+    assert "except OSError:" not in source_text

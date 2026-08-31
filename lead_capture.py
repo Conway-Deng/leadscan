@@ -68,10 +68,7 @@ class SQLiteLeadStore:
                         pass
 
                 if os.name == "posix":
-                    try:
-                        os.chmod(str(self.path), 0o600)
-                    except OSError:
-                        pass
+                    os.chmod(str(self.path), 0o600)
 
                 conn = sqlite3.connect(str(self.path), timeout=5.0)
                 try:
