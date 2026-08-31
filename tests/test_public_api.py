@@ -1,7 +1,10 @@
+import asyncio
+import sqlite3
 from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
 import pytest
 
+import lead_capture
 import public_api
 import public_audit
 from public_limits import ConcurrencyGate, SlidingWindowRateLimiter
@@ -183,9 +186,23 @@ def test_extra_json_keys():
     app = public_api.create_app()
     client = TestClient(app)
 
+    # Legacy with extra key
     response = client.post(
         "/api/audit",
         json={"url": "https://example.com", "admin": True},
+    )
+    assert response.status_code == 400
+    assert response.json() == {"ok": False, "code": public_api.INVALID_REQUEST}
+
+    # Capture with extra key
+    response = client.post(
+        "/api/audit",
+        json={
+            "url": "https://example.com",
+            "contact_name": "Alice",
+            "email": "alice@example.com",
+            "extra": 1,
+        },
     )
     assert response.status_code == 400
     assert response.json() == {"ok": False, "code": public_api.INVALID_REQUEST}
@@ -522,13 +539,11 @@ def test_http_timeout_while_audit_runner_blocks():
 
 
 def test_http_timeout_covers_body_parsing(monkeypatch):
-    import asyncio
-
-    async def slow_read_audit_url(request):
+    async def slow_read_audit_request(request):
         await asyncio.sleep(0.1)
-        return "https://example.com"
+        return "https://example.com", False, "", ""
 
-    monkeypatch.setattr(public_api, "_read_audit_url", slow_read_audit_url)
+    monkeypatch.setattr(public_api, "_read_audit_request", slow_read_audit_request)
 
     audit_runner = MagicMock()
     app = public_api.create_app(
@@ -600,3 +615,387 @@ def test_procfile_contents_and_single_worker():
     assert "--workers 2" not in content
     assert "--workers 3" not in content
     assert "--workers 4" not in content
+
+
+# ==============================================================================
+# Task 9C-5B Lead Capture Integration Tests
+# ==============================================================================
+
+
+def test_legacy_url_only_request_does_not_capture_lead():
+    audit_runner = MagicMock(return_value=make_ok_payload("https://example.com"))
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
+
+    app = public_api.create_app(
+        audit_runner=audit_runner,
+        lead_store=lead_store,
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/audit", json={"url": "https://example.com"})
+
+    assert response.status_code == 200
+    assert response.json() == make_ok_payload("https://example.com")
+    audit_runner.assert_called_once()
+    lead_store.save_lead.assert_not_called()
+
+
+def test_capture_request_saves_lead_after_successful_audit():
+    audit_runner = MagicMock(return_value=make_ok_payload("   example.com   "))
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
+    lead_store.save_lead.return_value = 42
+
+    app = public_api.create_app(
+        audit_runner=audit_runner,
+        lead_store=lead_store,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/audit",
+        json={
+            "url": "   example.com   ",
+            "contact_name": "  Alice Owner  ",
+            "email": "  alice@example.com  ",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == make_ok_payload("   example.com   ")
+    assert audit_runner.call_args[0][0] == "   example.com   "
+    lead_store.save_lead.assert_called_once_with(
+        contact_name="Alice Owner",
+        email="alice@example.com",
+        website_url="   example.com   ",
+    )
+
+
+def test_save_happens_after_audit_call_order():
+    events = []
+
+    def fake_audit_runner(url, client_key, limiter, gate):
+        events.append("audit")
+        return make_ok_payload(url)
+
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
+    lead_store.save_lead.side_effect = lambda **kw: events.append("save") or 1
+
+    app = public_api.create_app(
+        audit_runner=fake_audit_runner,
+        lead_store=lead_store,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/audit",
+        json={
+            "url": "https://example.com",
+            "contact_name": "Alice",
+            "email": "alice@example.com",
+        },
+    )
+
+    assert response.status_code == 200
+    assert events == ["audit", "save"]
+
+
+@pytest.mark.parametrize(
+    "error_code,expected_status",
+    [
+        (public_audit.INVALID_URL, 400),
+        (public_audit.RATE_LIMITED, 429),
+        (public_audit.BUSY, 503),
+        (public_audit.AUDIT_TIMEOUT, 504),
+        (public_audit.AUDIT_FAILED, 500),
+    ],
+)
+def test_audit_failure_does_not_save_lead(error_code, expected_status):
+    audit_runner = MagicMock(return_value={"ok": False, "code": error_code})
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
+
+    app = public_api.create_app(
+        audit_runner=audit_runner,
+        lead_store=lead_store,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/audit",
+        json={
+            "url": "https://example.com",
+            "contact_name": "Alice",
+            "email": "alice@example.com",
+        },
+    )
+
+    assert response.status_code == expected_status
+    assert response.json()["code"] == error_code
+    lead_store.save_lead.assert_not_called()
+
+
+def test_capture_request_without_store_fails_before_audit(monkeypatch):
+    monkeypatch.delenv("LEADSCAN_LEAD_DB_PATH", raising=False)
+    audit_runner = MagicMock()
+
+    app = public_api.create_app(
+        audit_runner=audit_runner,
+        lead_store=None,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/audit",
+        json={
+            "url": "https://example.com",
+            "contact_name": "Alice",
+            "email": "alice@example.com",
+        },
+    )
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "ok": False,
+        "code": public_api.LEAD_CAPTURE_FAILED,
+    }
+    assert response.headers.get("Cache-Control") == "no-store"
+    audit_runner.assert_not_called()
+
+
+def test_capture_storage_failure_returns_generic_error_without_pii():
+    audit_runner = MagicMock(return_value=make_ok_payload("https://example.com/unique-path"))
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
+    lead_store.save_lead.side_effect = lead_capture.LeadStoreError("Failed to store lead")
+
+    app = public_api.create_app(
+        audit_runner=audit_runner,
+        lead_store=lead_store,
+    )
+    client = TestClient(app)
+
+    secret_name = "SuperSecretPerson"
+    secret_email = "supersecretperson@classified.example.com"
+    secret_url = "https://example.com/unique-path"
+
+    response = client.post(
+        "/api/audit",
+        json={
+            "url": secret_url,
+            "contact_name": secret_name,
+            "email": secret_email,
+        },
+    )
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "ok": False,
+        "code": public_api.LEAD_CAPTURE_FAILED,
+    }
+    assert secret_name not in response.text
+    assert secret_email not in response.text
+    assert secret_url not in response.text
+    assert "LeadStoreError" not in response.text
+
+
+def test_unexpected_store_error_also_fails_closed():
+    audit_runner = MagicMock(return_value=make_ok_payload("https://example.com"))
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
+    lead_store.save_lead.side_effect = RuntimeError("disk /secret/path failed")
+
+    app = public_api.create_app(
+        audit_runner=audit_runner,
+        lead_store=lead_store,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/audit",
+        json={
+            "url": "https://example.com",
+            "contact_name": "Alice",
+            "email": "alice@example.com",
+        },
+    )
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "ok": False,
+        "code": public_api.LEAD_CAPTURE_FAILED,
+    }
+    assert "/secret/path" not in response.text
+
+
+@pytest.mark.parametrize(
+    "contact_name,email",
+    [
+        (123, "valid@example.com"),
+        ("a" * 121, "valid@example.com"),
+        ("bad\x00name", "valid@example.com"),
+        ("Alice", 123),
+        ("Alice", ""),
+        ("Alice", "   "),
+        ("Alice", "a" * 255),
+        ("Alice", "bad\x00email@example.com"),
+        ("Alice", "internal space@example.com"),
+        ("Alice", "tab\temail@example.com"),
+        ("Alice", "newline\n@example.com"),
+        ("Alice", "noatsign.example.com"),
+        ("Alice", "two@at@example.com"),
+        ("Alice", "@example.com"),
+        ("Alice", "user@"),
+        ("Alice", ("a" * 65) + "@example.com"),
+        ("Alice", ".leadingdot@example.com"),
+        ("Alice", "trailingdot.@example.com"),
+        ("Alice", "double..dot@example.com"),
+        ("Alice", "user@.leadingdomaindot.com"),
+        ("Alice", "user@trailingdomaindot.com."),
+        ("Alice", "user@double..domain.com"),
+    ],
+)
+def test_invalid_contact_fields_rejected_before_audit(contact_name, email):
+    audit_runner = MagicMock()
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
+
+    app = public_api.create_app(
+        audit_runner=audit_runner,
+        lead_store=lead_store,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/audit",
+        json={
+            "url": "https://example.com",
+            "contact_name": contact_name,
+            "email": email,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"ok": False, "code": public_api.INVALID_REQUEST}
+    audit_runner.assert_not_called()
+    lead_store.save_lead.assert_not_called()
+    if isinstance(contact_name, str) and contact_name:
+        assert contact_name not in response.text
+    if isinstance(email, str) and email:
+        assert email not in response.text
+
+
+@pytest.mark.parametrize(
+    "partial_payload",
+    [
+        {"url": "https://example.com", "email": "a@example.com"},
+        {"url": "https://example.com", "contact_name": "Alice"},
+        {"contact_name": "Alice", "email": "a@example.com"},
+    ],
+)
+def test_partial_contact_bodies_rejected(partial_payload):
+    audit_runner = MagicMock()
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
+
+    app = public_api.create_app(
+        audit_runner=audit_runner,
+        lead_store=lead_store,
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/audit", json=partial_payload)
+
+    assert response.status_code == 400
+    assert response.json() == {"ok": False, "code": public_api.INVALID_REQUEST}
+    audit_runner.assert_not_called()
+    lead_store.save_lead.assert_not_called()
+
+
+def test_env_configured_lead_store_is_lazy_until_capture(tmp_path, monkeypatch):
+    db_file = tmp_path / "private" / "leads.sqlite3"
+    monkeypatch.setenv("LEADSCAN_LEAD_DB_PATH", str(db_file))
+
+    audit_runner = MagicMock(return_value=make_ok_payload("https://example.com"))
+
+    app = public_api.create_app(audit_runner=audit_runner)
+    assert not db_file.exists()
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/audit",
+        json={
+            "url": "https://example.com",
+            "contact_name": "Bob Owner",
+            "email": "bob@example.com",
+        },
+    )
+
+    assert response.status_code == 200
+    assert db_file.exists()
+
+    conn = sqlite3.connect(str(db_file))
+    try:
+        rows = conn.execute("SELECT contact_name, email, website_url, source FROM public_leads").fetchall()
+        assert len(rows) == 1
+        assert rows[0] == ("Bob Owner", "bob@example.com", "https://example.com", "public_audit_widget")
+    finally:
+        conn.close()
+
+
+def test_env_whitespace_means_disabled(monkeypatch):
+    monkeypatch.setenv("LEADSCAN_LEAD_DB_PATH", "   ")
+    audit_runner = MagicMock(return_value=make_ok_payload("https://example.com"))
+
+    app = public_api.create_app(audit_runner=audit_runner)
+    client = TestClient(app)
+
+    # Capture request fails with 500 when store is disabled
+    response = client.post(
+        "/api/audit",
+        json={
+            "url": "https://example.com",
+            "contact_name": "Bob Owner",
+            "email": "bob@example.com",
+        },
+    )
+    assert response.status_code == 500
+    assert response.json() == {
+        "ok": False,
+        "code": public_api.LEAD_CAPTURE_FAILED,
+    }
+    audit_runner.assert_not_called()
+
+    # Legacy request still succeeds
+    legacy_response = client.post("/api/audit", json={"url": "https://example.com"})
+    assert legacy_response.status_code == 200
+    assert legacy_response.json() == make_ok_payload("https://example.com")
+
+
+def test_success_response_does_not_add_capture_metadata():
+    audit_runner = MagicMock(return_value=make_ok_payload("https://example.com"))
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
+    lead_store.save_lead.return_value = 101
+
+    app = public_api.create_app(
+        audit_runner=audit_runner,
+        lead_store=lead_store,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/audit",
+        json={
+            "url": "https://example.com",
+            "contact_name": "Alice",
+            "email": "alice@example.com",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert set(data.keys()) == {"ok", "code", "result"}
+    for forbidden in ["lead_id", "captured", "database", "email", "contact_name"]:
+        assert forbidden not in data
+
+
+def test_no_database_read_route():
+    app = public_api.create_app()
+    client = TestClient(app)
+
+    assert client.get("/api/leads").status_code == 404
+    assert client.post("/api/leads").status_code == 404

@@ -51,6 +51,7 @@ import threading
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+import lead_capture
 import public_audit
 from public_limits import ConcurrencyGate, SlidingWindowRateLimiter
 
@@ -70,6 +71,7 @@ AUDIT_HTTP_WAIT_SECONDS = 105.0
 MAX_RESPONSE_BODY_BYTES = 384 * 1024
 
 INVALID_REQUEST = "invalid_request"
+LEAD_CAPTURE_FAILED = "lead_capture_failed"
 
 
 class InvalidRequest(ValueError):
@@ -125,12 +127,43 @@ def _client_identity(request, trusted_header=None):
         return peer_host
 
 
-async def _read_audit_url(request):
+def _validate_contact_name(raw_name):
+    if not isinstance(raw_name, str):
+        raise InvalidRequest("Invalid contact_name")
+    cleaned = raw_name.strip()
+    if "\x00" in cleaned or len(cleaned) > lead_capture.MAX_CONTACT_NAME_LENGTH:
+        raise InvalidRequest("Invalid contact_name")
+    return cleaned
+
+
+def _validate_email(raw_email):
+    if not isinstance(raw_email, str):
+        raise InvalidRequest("Invalid email")
+    cleaned = raw_email.strip()
+    if not cleaned or "\x00" in cleaned or len(cleaned) > lead_capture.MAX_EMAIL_LENGTH:
+        raise InvalidRequest("Invalid email")
+    if any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in cleaned):
+        raise InvalidRequest("Invalid email")
+    if cleaned.count("@") != 1:
+        raise InvalidRequest("Invalid email")
+    local_part, domain_part = cleaned.split("@")
+    if not local_part or not domain_part:
+        raise InvalidRequest("Invalid email")
+    if len(local_part) > 64 or len(domain_part) > 253:
+        raise InvalidRequest("Invalid email")
+    if local_part.startswith(".") or local_part.endswith(".") or ".." in local_part:
+        raise InvalidRequest("Invalid email")
+    if domain_part.startswith(".") or domain_part.endswith(".") or ".." in domain_part:
+        raise InvalidRequest("Invalid email")
+    return cleaned
+
+
+async def _read_audit_request(request):
     """
     Safely stream and parse the JSON request body within strict size limits.
 
     Returns:
-        str: The raw submitted URL string.
+        tuple: (submitted_url, capture_requested, contact_name, email)
 
     Raises:
         InvalidRequest: If Content-Type, Content-Length, body size, or schema is invalid.
@@ -164,14 +197,21 @@ async def _read_audit_url(request):
     if not isinstance(data, dict):
         raise InvalidRequest("JSON payload must be an object")
 
-    if set(data.keys()) != {"url"}:
-        raise InvalidRequest("JSON payload must contain exactly 'url' key")
-
-    url = data["url"]
-    if not isinstance(url, str):
-        raise InvalidRequest("'url' must be a string")
-
-    return url
+    keys = set(data.keys())
+    if keys == {"url"}:
+        url = data["url"]
+        if not isinstance(url, str):
+            raise InvalidRequest("'url' must be a string")
+        return url, False, "", ""
+    elif keys == {"url", "contact_name", "email"}:
+        url = data["url"]
+        if not isinstance(url, str):
+            raise InvalidRequest("'url' must be a string")
+        contact_name = _validate_contact_name(data["contact_name"])
+        email = _validate_email(data["email"])
+        return url, True, contact_name, email
+    else:
+        raise InvalidRequest("Invalid JSON payload keys")
 
 
 _STATUS_BY_CODE = {
@@ -181,6 +221,7 @@ _STATUS_BY_CODE = {
     public_audit.INVALID_URL: 400,
     public_audit.AUDIT_TIMEOUT: 504,
     public_audit.AUDIT_FAILED: 500,
+    LEAD_CAPTURE_FAILED: 500,
 }
 
 
@@ -253,6 +294,7 @@ def create_app(
     trusted_client_header=None,
     worker_state=None,
     audit_wait_seconds=AUDIT_HTTP_WAIT_SECONDS,
+    lead_store=None,
 ):
     """
     Application factory for the public audit FastAPI service.
@@ -277,6 +319,12 @@ def create_app(
 
     gate = gate or ConcurrencyGate(MAX_CONCURRENT_AUDITS)
     audit_runner = audit_runner or public_audit.run_public_audit
+
+    if lead_store is None:
+        raw_lead_db_path = os.getenv("LEADSCAN_LEAD_DB_PATH", "")
+        lead_db_path = raw_lead_db_path.strip()
+        if lead_db_path:
+            lead_store = lead_capture.SQLiteLeadStore(lead_db_path)
 
     if trusted_client_header is None:
         raw_header = os.getenv("LEADSCAN_TRUSTED_CLIENT_IP_HEADER", "")
@@ -321,14 +369,42 @@ def create_app(
             })
 
         async def execute_request():
-            submitted_url = await _read_audit_url(request)
-            return await asyncio.to_thread(
+            submitted_url, capture_requested, contact_name, email = await _read_audit_request(request)
+
+            if capture_requested and lead_store is None:
+                return {
+                    "ok": False,
+                    "code": LEAD_CAPTURE_FAILED,
+                }
+
+            audit_result = await asyncio.to_thread(
                 audit_runner,
                 submitted_url,
                 client_key,
                 audit_limiter,
                 gate,
             )
+
+            if (
+                capture_requested
+                and isinstance(audit_result, dict)
+                and audit_result.get("ok") is True
+                and audit_result.get("code") == public_audit.OK
+            ):
+                try:
+                    await asyncio.to_thread(
+                        lead_store.save_lead,
+                        contact_name=contact_name,
+                        email=email,
+                        website_url=submitted_url,
+                    )
+                except Exception:
+                    return {
+                        "ok": False,
+                        "code": LEAD_CAPTURE_FAILED,
+                    }
+
+            return audit_result
 
         try:
             result = await asyncio.wait_for(
