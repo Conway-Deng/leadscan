@@ -22,8 +22,8 @@
 
     <section class="audit-card">
       <form id="audit-form" class="audit-form">
-        <label for="website-url" class="form-label">Website address</label>
-        <div class="input-group">
+        <div class="form-field">
+          <label for="website-url" class="form-label">Website address</label>
           <input
             id="website-url"
             class="form-input"
@@ -34,8 +34,44 @@
             placeholder="example.com"
             required
           >
+        </div>
+
+        <div class="contact-grid">
+          <div class="form-field">
+            <label for="contact-name" class="form-label">Your name (optional)</label>
+            <input
+              id="contact-name"
+              class="form-input"
+              type="text"
+              autocomplete="name"
+              maxlength="120"
+              placeholder="Jane Doe"
+            >
+          </div>
+          <div class="form-field">
+            <label for="contact-email" class="form-label">Work email</label>
+            <input
+              id="contact-email"
+              class="form-input"
+              type="email"
+              inputmode="email"
+              autocomplete="email"
+              maxlength="254"
+              placeholder="jane@example.com"
+              required
+              aria-describedby="contact-privacy"
+            >
+          </div>
+        </div>
+
+        <p id="contact-privacy" class="contact-privacy">
+          We’ll store your name and email with this website review so the LeadScan team can follow up about the review. Do not enter sensitive information.
+        </p>
+
+        <div class="form-actions">
           <button id="audit-submit" class="submit-btn" type="submit">Review website</button>
         </div>
+
         <p class="expectation-text">The review can take up to about 1–2 minutes.</p>
       </form>
 

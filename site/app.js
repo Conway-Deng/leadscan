@@ -3,6 +3,8 @@
 (function () {
   const auditForm = document.getElementById("audit-form");
   const websiteInput = document.getElementById("website-url");
+  const contactNameInput = document.getElementById("contact-name");
+  const contactEmailInput = document.getElementById("contact-email");
   const auditSubmit = document.getElementById("audit-submit");
   const auditStatus = document.getElementById("audit-status");
   const auditResult = document.getElementById("audit-result");
@@ -13,12 +15,13 @@
   const auditReset = document.getElementById("audit-reset");
 
   const ERROR_MESSAGES = {
-    invalid_request: "Please enter a website address and try again.",
+    invalid_request: "Please check the website and contact details and try again.",
     invalid_url: "That website address cannot be reviewed. Check the address and try again.",
     rate_limited: "Too many review requests have been made. Please try again shortly.",
     busy: "The review service is busy right now. Please try again shortly.",
     audit_timeout: "The website took too long to review. Please try again later.",
     audit_failed: "The website could not be reviewed right now. Please try again later.",
+    lead_capture_failed: "We could not save your contact details. Please try again later.",
     generic: "The review service returned an unexpected response. Please try again.",
     network: "Could not reach the review service. Check your connection and try again."
   };
@@ -37,6 +40,8 @@
 
   function setLoading(isLoading) {
     websiteInput.disabled = isLoading;
+    contactNameInput.disabled = isLoading;
+    contactEmailInput.disabled = isLoading;
     auditSubmit.disabled = isLoading;
     if (isLoading) {
       auditSubmit.textContent = "Reviewing…";
@@ -52,9 +57,13 @@
     setStatus("");
     auditForm.hidden = false;
     websiteInput.disabled = false;
+    contactNameInput.disabled = false;
+    contactEmailInput.disabled = false;
     auditSubmit.disabled = false;
     auditSubmit.textContent = "Review website";
     websiteInput.value = "";
+    contactNameInput.value = "";
+    contactEmailInput.value = "";
     websiteInput.focus();
   }
 
@@ -62,7 +71,10 @@
     event.preventDefault();
 
     const submittedUrl = websiteInput.value.trim();
-    if (!submittedUrl) {
+    const contactName = contactNameInput.value.trim();
+    const contactEmail = contactEmailInput.value.trim();
+
+    if (!submittedUrl || !contactEmail) {
       setStatus(ERROR_MESSAGES.invalid_request);
       return;
     }
@@ -77,7 +89,9 @@
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          url: submittedUrl
+          url: submittedUrl,
+          contact_name: contactName,
+          email: contactEmail
         })
       });
 

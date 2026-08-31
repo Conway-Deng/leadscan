@@ -157,6 +157,12 @@ def test_public_frontend_success_flow_in_real_chromium(
         url_input = page.locator("#website-url")
         url_input.fill("  example.com  ")
 
+        name_input = page.locator("#contact-name")
+        name_input.fill("  Alice Owner  ")
+
+        email_input = page.locator("#contact-email")
+        email_input.fill("alice@example.com")
+
         submit_btn = page.locator("#audit-submit")
         submit_btn.click()
 
@@ -166,7 +172,11 @@ def test_public_frontend_success_flow_in_real_chromium(
         # Request verification
         assert captured["method"] == "POST"
         assert urllib.parse.urlparse(captured["url"]).path == "/api/audit"
-        assert captured["post_data"] == {"url": "example.com"}
+        assert captured["post_data"] == {
+            "url": "example.com",
+            "contact_name": "Alice Owner",
+            "email": "alice@example.com",
+        }
         content_type_header = {k.lower(): v for k, v in captured["headers"].items()}.get("content-type", "")
         assert "application/json" in content_type_header
 
@@ -190,6 +200,10 @@ def test_public_frontend_success_flow_in_real_chromium(
         expect(page.locator("#audit-result")).to_be_hidden()
         expect(url_input).to_have_value("")
         expect(url_input).to_be_enabled()
+        expect(name_input).to_have_value("")
+        expect(name_input).to_be_enabled()
+        expect(email_input).to_have_value("")
+        expect(email_input).to_be_enabled()
         expect(submit_btn).to_be_enabled()
         expect(submit_btn).to_have_text("Review website")
         expect(status_el).to_have_text("")
@@ -232,6 +246,12 @@ def test_public_frontend_rate_limit_flow_in_real_chromium(
         url_input = page.locator("#website-url")
         url_input.fill("example.com")
 
+        name_input = page.locator("#contact-name")
+        name_input.fill("Alice Owner")
+
+        email_input = page.locator("#contact-email")
+        email_input.fill("alice@example.com")
+
         submit_btn = page.locator("#audit-submit")
         submit_btn.click()
 
@@ -240,13 +260,76 @@ def test_public_frontend_rate_limit_flow_in_real_chromium(
         expect(status_el).to_contain_text("17 seconds")
 
         # Error recovery UI assertions
-
         expect(page.locator("#audit-form")).to_be_visible()
         expect(page.locator("#audit-result")).to_be_hidden()
         expect(url_input).to_be_enabled()
+        expect(name_input).to_be_enabled()
+        expect(email_input).to_be_enabled()
         expect(submit_btn).to_be_enabled()
         expect(submit_btn).to_have_text("Review website")
         expect(url_input).to_have_value("example.com")
+        expect(name_input).to_have_value("Alice Owner")
+        expect(email_input).to_have_value("alice@example.com")
+
+        # External network check
+        for req_url in captured_urls:
+            if req_url.startswith(("http://", "https://")):
+                parsed = urllib.parse.urlparse(req_url)
+                assert parsed.hostname == "127.0.0.1", f"Unexpected external request: {req_url}"
+    finally:
+        page.close()
+
+
+def test_public_frontend_lead_capture_failure_recovers_in_real_chromium(
+    local_frontend_url,
+    frontend_chromium,
+):
+    page = frontend_chromium.new_page()
+    try:
+        captured_urls = []
+        page.on("request", lambda req: captured_urls.append(req.url))
+
+        def handle_capture_failed(route):
+            response_payload = {
+                "ok": False,
+                "code": "lead_capture_failed",
+            }
+            route.fulfill(
+                status=500,
+                content_type="application/json",
+                body=json.dumps(response_payload),
+            )
+
+        page.route("**/api/audit", handle_capture_failed)
+
+        page.goto(local_frontend_url)
+        url_input = page.locator("#website-url")
+        url_input.fill("example.com")
+
+        name_input = page.locator("#contact-name")
+        name_input.fill("Alice Owner")
+
+        email_input = page.locator("#contact-email")
+        email_input.fill("alice@example.com")
+
+        submit_btn = page.locator("#audit-submit")
+        submit_btn.click()
+
+        status_el = page.locator("#audit-status")
+        expect(status_el).to_contain_text("We could not save your contact details.")
+
+        # Error recovery UI assertions
+        expect(page.locator("#audit-form")).to_be_visible()
+        expect(page.locator("#audit-result")).to_be_hidden()
+        expect(url_input).to_be_enabled()
+        expect(name_input).to_be_enabled()
+        expect(email_input).to_be_enabled()
+        expect(submit_btn).to_be_enabled()
+        expect(submit_btn).to_have_text("Review website")
+        expect(url_input).to_have_value("example.com")
+        expect(name_input).to_have_value("Alice Owner")
+        expect(email_input).to_have_value("alice@example.com")
+        expect(page.locator("#result-score")).to_have_text("")
 
         # External network check
         for req_url in captured_urls:

@@ -62,7 +62,7 @@ def test_form_and_input_elements():
     form_tag, form_attrs = tags_by_id["audit-form"]
     assert form_tag == "form"
 
-    # Input
+    # Website Input
     assert "website-url" in tags_by_id
     input_tag, input_attrs = tags_by_id["website-url"]
     assert input_tag == "input"
@@ -71,11 +71,47 @@ def test_form_and_input_elements():
     assert input_attrs.get("maxlength") == "2048"
     assert "required" in input_attrs
 
+    # Contact Name Input
+    assert "contact-name" in tags_by_id
+    name_tag, name_attrs = tags_by_id["contact-name"]
+    assert name_tag == "input"
+    assert name_attrs.get("type") == "text"
+    assert name_attrs.get("autocomplete") == "name"
+    assert name_attrs.get("maxlength") == "120"
+    assert "required" not in name_attrs
+
+    # Contact Email Input
+    assert "contact-email" in tags_by_id
+    email_tag, email_attrs = tags_by_id["contact-email"]
+    assert email_tag == "input"
+    assert email_attrs.get("type") == "email"
+    assert email_attrs.get("inputmode") == "email"
+    assert email_attrs.get("autocomplete") == "email"
+    assert email_attrs.get("maxlength") == "254"
+    assert "required" in email_attrs
+    assert email_attrs.get("aria-describedby") == "contact-privacy"
+
     # Submit button
     assert "audit-submit" in tags_by_id
     btn_tag, btn_attrs = tags_by_id["audit-submit"]
     assert btn_tag == "button"
     assert btn_attrs.get("type") == "submit"
+
+
+def test_contact_capture_fields_have_clear_privacy_copy():
+    tags = parse_index_tags()
+    tags_by_id = {attrs["id"]: (tag, attrs) for tag, attrs in tags if "id" in attrs}
+
+    assert "contact-privacy" in tags_by_id
+    html_content = INDEX_HTML.read_text(encoding="utf-8")
+
+    lower_content = html_content.lower()
+    assert "name" in lower_content and "email" in lower_content
+    assert "follow up" in lower_content or "follow-up" in lower_content
+    assert "sensitive" in lower_content
+
+    for forbidden_id in ("phone", "telephone", "job-title", "company-size"):
+        assert forbidden_id not in tags_by_id
 
 
 def test_live_status_region():
@@ -111,7 +147,6 @@ def test_report_iframe_sandbox_and_security_attributes():
     frame_tag, frame_attrs = tags_by_id["report-preview"]
     assert frame_tag == "iframe"
     assert "sandbox" in frame_attrs
-    # Sandbox value should be empty string / None (full restriction, no permissions)
     sandbox_val = frame_attrs.get("sandbox") or ""
     for forbidden_perm in ("allow-scripts", "allow-same-origin", "allow-forms", "allow-top-navigation"):
         assert forbidden_perm not in sandbox_val
@@ -155,8 +190,32 @@ def test_js_uses_srcdoc_and_no_innerhtml():
 def test_js_contains_all_error_code_mappings():
     js_content = APP_JS.read_text(encoding="utf-8")
 
-    for code in ("invalid_request", "invalid_url", "rate_limited", "busy", "audit_timeout", "audit_failed"):
+    for code in (
+        "invalid_request",
+        "invalid_url",
+        "rate_limited",
+        "busy",
+        "audit_timeout",
+        "audit_failed",
+        "lead_capture_failed",
+    ):
         assert code in js_content
+
+
+def test_js_sends_contact_capture_contract_without_browser_persistence():
+    js_content = APP_JS.read_text(encoding="utf-8")
+
+    assert "contact_name" in js_content
+    assert "email" in js_content
+    assert "contact-name" in js_content
+    assert "contact-email" in js_content
+
+    assert '"/api/audit"' in js_content or "'/api/audit'" in js_content
+    assert '"POST"' in js_content or "'POST'" in js_content
+    assert "application/json" in js_content
+
+    for forbidden in ("localStorage", "sessionStorage", "indexedDB", "document.cookie", "console.log"):
+        assert forbidden not in js_content
 
 
 def test_js_error_handling_does_not_leak_raw_internals():
@@ -171,6 +230,10 @@ def test_js_loading_and_reset_semantics():
     js_content = APP_JS.read_text(encoding="utf-8")
 
     assert ".disabled = " in js_content
+    assert "contactNameInput.disabled" in js_content
+    assert "contactEmailInput.disabled" in js_content
+    assert 'contactNameInput.value = ""' in js_content or "contactNameInput.value = ''" in js_content
+    assert 'contactEmailInput.value = ""' in js_content or "contactEmailInput.value = ''" in js_content
     assert "Reviewing…" in js_content or "Reviewing..." in js_content
     assert 'reportPreview.srcdoc = ""' in js_content or "reportPreview.srcdoc = ''" in js_content
 
@@ -178,6 +241,8 @@ def test_js_loading_and_reset_semantics():
 def test_css_responsive_and_accessibility():
     css_content = STYLES_CSS.read_text(encoding="utf-8")
 
+    assert ".contact-grid" in css_content
+    assert ".form-field" in css_content
     assert "@media" in css_content
     assert "max-width" in css_content
     assert "prefers-reduced-motion" in css_content
