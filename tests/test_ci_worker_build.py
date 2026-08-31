@@ -27,6 +27,36 @@ def test_worker_container_build_job_exists():
     assert "contents: read" in text
 
 
+def test_worker_job_has_no_unindented_child_lines():
+    lines = _worker_job_text().splitlines()
+    assert lines
+    assert lines[0] == "  worker-container-build:"
+
+    for line in lines[1:]:
+        if line.strip():
+            assert line.startswith("    "), repr(line)
+
+
+def test_worker_run_block_contents_remain_indented():
+    lines = _worker_job_text().splitlines()
+    in_run_block = False
+
+    for line in lines:
+        if line.strip() == "run: |":
+            assert line.startswith("        run: |")
+            in_run_block = True
+            continue
+
+        if in_run_block:
+            # Next step begins with 6 spaces + "- "
+            if line.startswith("      - "):
+                in_run_block = False
+                continue
+            if line.strip():
+                leading = len(line) - len(line.lstrip(" "))
+                assert leading >= 10, f"Run block line under-indented: {line!r}"
+
+
 def test_worker_container_job_builds_real_worker_dockerfile():
     job_text = _worker_job_text()
     assert "docker build" in job_text
@@ -46,7 +76,10 @@ def test_worker_container_job_checks_runtime_contents():
     assert "command -v ip6tables" in job_text
     assert "/app/deploy/fly/apply-egress-firewall.sh" in job_text
     assert "/app/deploy/fly/start-worker.sh" in job_text
-    assert "1.62.0" in job_text
+    assert "--entrypoint python" in job_text
+    assert 'import importlib.metadata as m' in job_text
+    assert 'm.version("playwright")' in job_text
+    assert '"1.62.0"' in job_text
     assert "test ! -e /app/tests" in job_text
     assert "test ! -e /app/site" in job_text
     assert "test ! -e /app/.git" in job_text
@@ -57,10 +90,15 @@ def test_worker_container_job_launches_chromium_as_pwuser():
     job_text = _worker_job_text()
     assert "--user pwuser:pwuser" in job_text
     assert "HOME=/home/pwuser" in job_text
+    assert "--ipc=host" in job_text
     assert "--entrypoint python" in job_text
     assert "sync_playwright" in job_text
     assert "chromium.launch" in job_text
+    assert "browser.new_page" in job_text
+    assert "page.set_content" in job_text
     assert "LeadScan Worker CI" in job_text
+    assert "browser.close" in job_text
+    assert "p.stop()" in job_text
     assert "non_root_chromium=PASS" in job_text
 
 
