@@ -172,7 +172,7 @@ LeadScan also includes an independently deployable public website review widget:
 
 * `public_api.py`: FastAPI application serving strictly `POST /api/audit` (automatic OpenAPI/docs endpoints disabled).
 * Requires the exact three-field schema (`url`, `contact_name`, `email`). Requests without contact details are rejected before auditing.
-* `lead_capture.py`: Private SQLite store recording visitor contact details, timestamp, and audited URL. SQLite runs with WAL mode, busy timeout, and private file mode enforcement. It provides no public read endpoint.
+* `lead_capture.py`: Private SQLite store recording visitor contact details, timestamp, and audited URL. SQLite uses a busy timeout and private file mode enforcement. It provides no public read endpoint.
 * Worker CORS middleware validates and allows strictly one exact HTTPS origin via `LEADSCAN_ALLOWED_ORIGIN`. Wildcard origins (`*`) and credentials are not permitted. CORS is a browser transport control only and is not treated as authentication.
 
 ### Manual production wiring

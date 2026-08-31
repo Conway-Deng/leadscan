@@ -368,7 +368,7 @@ This work closes the major product gap identified in v4: allowing a prospective 
 * **Static public frontend** (`site/`): Pure HTML/CSS/JS without build tools or external script dependencies. Collects website URL, optional contact name, and required work email with clear privacy notice.
 * **Exact three-field API contract**: `POST /api/audit` strictly requires `url`, `contact_name`, and `email`. Legacy URL-only bypass is completely removed.
 * **Fail-closed lead capture**: Lead details are validated and saved to private SQLite storage before returning the audit report. Storage failures return 500 (`lead_capture_failed`) without leaking report HTML.
-* **Private SQLite lead store** (`lead_capture.py`): SQLite schema with WAL mode, busy timeout, and fail-closed permission enforcement. No public read API.
+* **Private SQLite lead store** (`lead_capture.py`): SQLite schema with busy timeout and fail-closed permission enforcement. No public read API.
 * **Exact HTTPS CORS origin**: FastAPI `CORSMiddleware` configured to allow strictly one exact HTTPS frontend origin (`LEADSCAN_ALLOWED_ORIGIN`), with wildcards forbidden. CORS is a browser transport permission only, not authentication.
 * **Configurable frontend worker origin**: `site/index.html` meta tag `leadscan-api-origin` defaults to same-origin `/api/audit` when blank and normalizes valid HTTPS origins. Frontend always appends fixed `/api/audit`.
 * **Exact Netlify CSP**: `netlify.toml` configures `connect-src 'self' https://leadscan-worker.example.invalid;` with manual deployment comments.
