@@ -53,3 +53,9 @@ out/
 
 # Netlify local CLI state
 .netlify/
+
+# Local public lead capture database (contains visitor contact details)
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
