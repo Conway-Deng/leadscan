@@ -21,11 +21,14 @@ SECURITY & ARCHITECTURE NOTES:
    - Max request body size: 4 KiB.
    - Max generated report HTML: 256 KiB UTF-8.
    - Max serialized response body: 384 KiB.
-   - HTTP response wait timeout: 105 seconds by default (single budget covering body read and scan).
+   - HTTP response wait timeout: 105 seconds by default bounding body read and audit scan.
 5. Timeout Semantics & Concurrency Safety:
-   - `asyncio.wait_for()` bounds the HTTP client wait time but does NOT terminate the
-     underlying synchronous worker thread.
-   - The underlying audit proceeds until its own cooperative deadline / browser shutdown.
+   - `asyncio.wait_for()` bounds the HTTP client wait time for request-body parsing and audit execution
+     but does NOT terminate the underlying synchronous worker thread.
+   - Inbound lead persistence begins only after successful audit completion; once persistence begins,
+     the request waits for persistence to finish.
+   - SQLite has its own bounded busy timeout in `SQLiteLeadStore`.
+   - A timed-out audit request never begins lead persistence.
    - Because the ConcurrencyGate slot is acquired inside `public_audit.run_public_audit()`,
      the concurrency slot is retained until the thread finishes and exits.
    - Timed-out requests do NOT free concurrency capacity early.
@@ -372,10 +375,13 @@ def create_app(
             submitted_url, capture_requested, contact_name, email = await _read_audit_request(request)
 
             if capture_requested and lead_store is None:
-                return {
-                    "ok": False,
-                    "code": LEAD_CAPTURE_FAILED,
-                }
+                return (
+                    {
+                        "ok": False,
+                        "code": LEAD_CAPTURE_FAILED,
+                    },
+                    None,
+                )
 
             audit_result = await asyncio.to_thread(
                 audit_runner,
@@ -391,23 +397,12 @@ def create_app(
                 and audit_result.get("ok") is True
                 and audit_result.get("code") == public_audit.OK
             ):
-                try:
-                    await asyncio.to_thread(
-                        lead_store.save_lead,
-                        contact_name=contact_name,
-                        email=email,
-                        website_url=submitted_url,
-                    )
-                except Exception:
-                    return {
-                        "ok": False,
-                        "code": LEAD_CAPTURE_FAILED,
-                    }
+                return audit_result, (contact_name, email, submitted_url)
 
-            return audit_result
+            return audit_result, None
 
         try:
-            result = await asyncio.wait_for(
+            result, capture_data = await asyncio.wait_for(
                 execute_request(),
                 timeout=audit_wait_seconds,
             )
@@ -418,11 +413,28 @@ def create_app(
                 "ok": False,
                 "code": public_audit.AUDIT_TIMEOUT,
             }
+            capture_data = None
         except Exception:
             result = {
                 "ok": False,
                 "code": public_audit.AUDIT_FAILED,
             }
+            capture_data = None
+
+        if capture_data is not None:
+            contact_name, email, submitted_url = capture_data
+            try:
+                await asyncio.to_thread(
+                    lead_store.save_lead,
+                    contact_name=contact_name,
+                    email=email,
+                    website_url=submitted_url,
+                )
+            except Exception:
+                result = {
+                    "ok": False,
+                    "code": LEAD_CAPTURE_FAILED,
+                }
 
         return _audit_response(result)
 

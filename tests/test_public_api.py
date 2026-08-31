@@ -1,5 +1,6 @@
 import asyncio
 import sqlite3
+import threading
 from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
 import pytest
@@ -999,3 +1000,87 @@ def test_no_database_read_route():
 
     assert client.get("/api/leads").status_code == 404
     assert client.post("/api/leads").status_code == 404
+
+
+def test_audit_timeout_never_starts_late_lead_save():
+    audit_started = threading.Event()
+    release_audit = threading.Event()
+    audit_finished = threading.Event()
+
+    def slow_runner(submitted_url, client_key, audit_limiter, gate):
+        audit_started.set()
+        release_audit.wait(timeout=2.0)
+        audit_finished.set()
+        return make_ok_payload(submitted_url)
+
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
+
+    app = public_api.create_app(
+        audit_runner=slow_runner,
+        lead_store=lead_store,
+        audit_wait_seconds=0.05,
+    )
+    client = TestClient(app)
+
+    try:
+        response = client.post(
+            "/api/audit",
+            json={
+                "url": "https://example.com",
+                "contact_name": "Alice",
+                "email": "alice@example.com",
+            },
+        )
+        assert response.status_code == 504
+        assert response.json() == {
+            "ok": False,
+            "code": public_audit.AUDIT_TIMEOUT,
+        }
+        assert audit_started.is_set()
+        lead_store.save_lead.assert_not_called()
+    finally:
+        release_audit.set()
+
+    assert audit_finished.wait(timeout=2.0)
+    lead_store.save_lead.assert_not_called()
+
+
+def test_capture_save_runs_after_audit_wait_boundary(monkeypatch):
+    events = []
+
+    async def tracked_wait_for(awaitable, timeout):
+        events.append("wait_enter")
+        try:
+            result = await awaitable
+            events.append("wait_exit")
+            return result
+        except Exception:
+            events.append("wait_exit_error")
+            raise
+
+    monkeypatch.setattr(public_api.asyncio, "wait_for", tracked_wait_for)
+
+    def fake_audit_runner(url, client_key, limiter, gate):
+        events.append("audit")
+        return make_ok_payload(url)
+
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
+    lead_store.save_lead.side_effect = lambda **kw: events.append("save") or 1
+
+    app = public_api.create_app(
+        audit_runner=fake_audit_runner,
+        lead_store=lead_store,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/audit",
+        json={
+            "url": "https://example.com",
+            "contact_name": "Alice",
+            "email": "alice@example.com",
+        },
+    )
+
+    assert response.status_code == 200
+    assert events == ["wait_enter", "audit", "wait_exit", "save"]
