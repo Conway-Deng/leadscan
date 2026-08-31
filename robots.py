@@ -29,6 +29,7 @@ import url_safety
 # per page, keeping public and default modes isolated.
 _CACHE = {}
 _CACHE_LIMIT = 2000
+MAX_PUBLIC_ROBOTS_BYTES = 512 * 1024
 
 
 def clear():
@@ -105,6 +106,34 @@ def _read(robots_url, timeout):
     return parser
 
 
+def _read_bounded_public_body(
+    response,
+    max_bytes=MAX_PUBLIC_ROBOTS_BYTES,
+):
+    """
+    Stream and decode response body safely within an upper byte limit.
+
+    Rejects oversized responses via Content-Length or streaming byte count.
+    """
+    content_length = response.headers.get("Content-Length")
+    if content_length is not None:
+        try:
+            cl_val = int(str(content_length).strip())
+            if cl_val >= 0 and cl_val > max_bytes:
+                return None
+        except (ValueError, TypeError):
+            pass
+
+    data = bytearray()
+    for chunk in response.iter_content(chunk_size=64 * 1024):
+        if chunk:
+            data.extend(chunk)
+            if len(data) > max_bytes:
+                return None
+
+    return data.decode("utf-8", errors="replace")
+
+
 def _read_public(
     robots_url,
     timeout,
@@ -119,7 +148,8 @@ def _read_public(
     Public robots mode:
     * validates every redirect hop before connecting;
     * disables automatic redirects;
-    * rejects any hostname resolving to a non-global IP.
+    * rejects any hostname resolving to a non-global IP;
+    * bounds response bodies to MAX_PUBLIC_ROBOTS_BYTES.
     However, DNS validation vs actual socket connection retains the same DNS TOCTOU
     boundary as the browser layer, so restricted network egress remains required.
     """
@@ -141,27 +171,35 @@ def _read_public(
                 timeout=timeout,
                 headers={"User-Agent": "LeadScan"},
                 allow_redirects=False,
+                stream=True,
             )
         except (requests.RequestException, OSError):
             return None
 
-        if response.status_code in (301, 302, 303, 307, 308):
-            redirects += 1
-            if redirects > max_redirects:
-                return None
-            location = response.headers.get("Location")
-            if not location:
-                return None
-            current_url = urllib.parse.urljoin(current_url, location.strip())
-            continue
-
-        if response.status_code != 200 or not response.text:
-            return None
-
-        parser = urllib.robotparser.RobotFileParser()
-        parser.set_url(current_url)
         try:
-            parser.parse(response.text.splitlines())
-        except Exception:
-            return None
-        return parser
+            if response.status_code in (301, 302, 303, 307, 308):
+                redirects += 1
+                if redirects > max_redirects:
+                    return None
+                location = response.headers.get("Location")
+                if not location:
+                    return None
+                current_url = urllib.parse.urljoin(current_url, location.strip())
+                continue
+
+            if response.status_code != 200:
+                return None
+
+            text = _read_bounded_public_body(response)
+            if not text:
+                return None
+
+            parser = urllib.robotparser.RobotFileParser()
+            parser.set_url(current_url)
+            try:
+                parser.parse(text.splitlines())
+            except Exception:
+                return None
+            return parser
+        finally:
+            response.close()

@@ -15,10 +15,30 @@ def clean_cache():
 
 
 class FakeResponse:
-    def __init__(self, status_code, text="", headers=None):
+    def __init__(
+        self,
+        status_code=200,
+        text="",
+        headers=None,
+        body=None,
+    ):
         self.status_code = status_code
         self.text = text
         self.headers = headers or {}
+        if body is None:
+            self._body = (text or "").encode("utf-8")
+        else:
+            self._body = body
+        self.closed = False
+        self.iter_content_called = False
+
+    def close(self):
+        self.closed = True
+
+    def iter_content(self, chunk_size=64 * 1024):
+        self.iter_content_called = True
+        for i in range(0, len(self._body), chunk_size):
+            yield self._body[i:i + chunk_size]
 
 
 def make_fake_resolver(ip_map):
@@ -52,8 +72,9 @@ def test_public_safe_direct_robots_fetch(monkeypatch):
     resolver = make_fake_resolver({"example.com": ["93.184.216.34"]})
     robots_text = "User-agent: *\nDisallow: /admin\n"
 
-    def fake_get(url, timeout=8, headers=None, allow_redirects=False):
+    def fake_get(url, timeout=8, headers=None, allow_redirects=False, stream=False):
         assert allow_redirects is False
+        assert stream is True
         return FakeResponse(200, text=robots_text)
 
     monkeypatch.setattr(requests, "get", fake_get)
@@ -75,6 +96,8 @@ def test_getter_receives_allow_redirects_false(monkeypatch):
     robots.may_fetch("https://example.com/page", public_only=True, resolver=resolver)
     assert len(calls) == 1
     assert calls[0].get("allow_redirects") is False
+    assert calls[0].get("stream") is True
+
 
 
 def test_safe_relative_redirect(monkeypatch):
@@ -284,3 +307,114 @@ def test_public_cache_revalidates_initial_hostname(monkeypatch):
     resolver_state["ips"] = ["10.0.0.5"]
     with pytest.raises(url_safety.UnsafeURL):
         robots.may_fetch("https://example.com/page", public_only=True, resolver=dynamic_resolver)
+
+
+def test_exact_limit_acceptance():
+    resolver = make_fake_resolver({"example.com": ["93.184.216.34"]})
+    base_content = b"User-agent: *\nDisallow: /blocked\n"
+    padding = b"# " + b"a" * (robots.MAX_PUBLIC_ROBOTS_BYTES - len(base_content) - 3) + b"\n"
+    body = base_content + padding
+    assert len(body) == robots.MAX_PUBLIC_ROBOTS_BYTES
+
+    fake_resp = FakeResponse(200, body=body)
+
+    def fake_get(url, **kwargs):
+        return fake_resp
+
+    parser = robots._read_public(
+        "https://example.com/robots.txt",
+        timeout=8,
+        resolver=resolver,
+        getter=fake_get,
+    )
+    assert parser is not None
+    assert parser.can_fetch("*", "https://example.com/blocked") is False
+    assert fake_resp.closed is True
+
+
+def test_oversized_content_length_early_reject():
+    resolver = make_fake_resolver({"example.com": ["93.184.216.34"]})
+    fake_resp = FakeResponse(
+        200,
+        text="User-agent: *\nDisallow: /blocked\n",
+        headers={"Content-Length": str(robots.MAX_PUBLIC_ROBOTS_BYTES + 1)},
+    )
+
+    def fake_get(url, **kwargs):
+        return fake_resp
+
+    result = robots._read_public(
+        "https://example.com/robots.txt",
+        timeout=8,
+        resolver=resolver,
+        getter=fake_get,
+    )
+    assert result is None
+    assert fake_resp.iter_content_called is False
+    assert fake_resp.closed is True
+
+
+def test_oversized_chunked_response():
+    resolver = make_fake_resolver({"example.com": ["93.184.216.34"]})
+    body = b"x" * (robots.MAX_PUBLIC_ROBOTS_BYTES + 1)
+    fake_resp = FakeResponse(200, body=body)
+
+    def fake_get(url, **kwargs):
+        return fake_resp
+
+    result = robots._read_public(
+        "https://example.com/robots.txt",
+        timeout=8,
+        resolver=resolver,
+        getter=fake_get,
+    )
+    assert result is None
+    assert fake_resp.iter_content_called is True
+    assert fake_resp.closed is True
+
+
+def test_malformed_content_length():
+    resolver = make_fake_resolver({"example.com": ["93.184.216.34"]})
+    fake_resp = FakeResponse(
+        200,
+        text="User-agent: *\nDisallow: /secret\n",
+        headers={"Content-Length": "not-a-number"},
+    )
+
+    def fake_get(url, **kwargs):
+        return fake_resp
+
+    parser = robots._read_public(
+        "https://example.com/robots.txt",
+        timeout=8,
+        resolver=resolver,
+        getter=fake_get,
+    )
+    assert parser is not None
+    assert fake_resp.iter_content_called is True
+    assert parser.can_fetch("*", "https://example.com/secret") is False
+    assert fake_resp.closed is True
+
+
+def test_redirect_response_closed():
+    resolver = make_fake_resolver({"example.com": ["93.184.216.34"]})
+    resp1 = FakeResponse(302, headers={"Location": "/robots-final.txt"})
+    resp2 = FakeResponse(200, text="User-agent: *\nDisallow: /secret\n")
+
+    def fake_get(url, **kwargs):
+        if url == "https://example.com/robots.txt":
+            return resp1
+        if url == "https://example.com/robots-final.txt":
+            return resp2
+        return FakeResponse(404)
+
+    parser = robots._read_public(
+        "https://example.com/robots.txt",
+        timeout=8,
+        resolver=resolver,
+        getter=fake_get,
+    )
+    assert parser is not None
+    assert parser.can_fetch("*", "https://example.com/secret") is False
+    assert resp1.closed is True
+    assert resp2.closed is True
