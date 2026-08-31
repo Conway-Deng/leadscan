@@ -166,7 +166,7 @@ async def _read_audit_request(request):
     Safely stream and parse the JSON request body within strict size limits.
 
     Returns:
-        tuple: (submitted_url, capture_requested, contact_name, email)
+        tuple: (submitted_url, contact_name, email)
 
     Raises:
         InvalidRequest: If Content-Type, Content-Length, body size, or schema is invalid.
@@ -201,20 +201,16 @@ async def _read_audit_request(request):
         raise InvalidRequest("JSON payload must be an object")
 
     keys = set(data.keys())
-    if keys == {"url"}:
-        url = data["url"]
-        if not isinstance(url, str):
-            raise InvalidRequest("'url' must be a string")
-        return url, False, "", ""
-    elif keys == {"url", "contact_name", "email"}:
-        url = data["url"]
-        if not isinstance(url, str):
-            raise InvalidRequest("'url' must be a string")
-        contact_name = _validate_contact_name(data["contact_name"])
-        email = _validate_email(data["email"])
-        return url, True, contact_name, email
-    else:
+    if keys != {"url", "contact_name", "email"}:
         raise InvalidRequest("Invalid JSON payload keys")
+
+    url = data["url"]
+    if not isinstance(url, str):
+        raise InvalidRequest("'url' must be a string")
+
+    contact_name = _validate_contact_name(data["contact_name"])
+    email = _validate_email(data["email"])
+    return url, contact_name, email
 
 
 _STATUS_BY_CODE = {
@@ -372,9 +368,9 @@ def create_app(
             })
 
         async def execute_request():
-            submitted_url, capture_requested, contact_name, email = await _read_audit_request(request)
+            submitted_url, contact_name, email = await _read_audit_request(request)
 
-            if capture_requested and lead_store is None:
+            if lead_store is None:
                 return (
                     {
                         "ok": False,
@@ -392,8 +388,7 @@ def create_app(
             )
 
             if (
-                capture_requested
-                and isinstance(audit_result, dict)
+                isinstance(audit_result, dict)
                 and audit_result.get("ok") is True
                 and audit_result.get("code") == public_audit.OK
             ):

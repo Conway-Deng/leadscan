@@ -26,17 +26,35 @@ def make_ok_payload(url="https://example.com"):
     }
 
 
+def make_capture_body(
+    url="https://example.com",
+    contact_name="Test User",
+    email="test@example.com",
+):
+    return {
+        "url": url,
+        "contact_name": contact_name,
+        "email": email,
+    }
+
+
 def test_post_audit_success():
     audit_runner = MagicMock(return_value=make_ok_payload("https://example.com"))
-    app = public_api.create_app(audit_runner=audit_runner)
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
+    app = public_api.create_app(audit_runner=audit_runner, lead_store=lead_store)
     client = TestClient(app)
 
-    response = client.post("/api/audit", json={"url": "https://example.com"})
+    response = client.post("/api/audit", json=make_capture_body("https://example.com"))
 
     assert response.status_code == 200
     assert response.headers.get("Cache-Control") == "no-store"
     assert "Retry-After" not in response.headers
     assert response.json() == make_ok_payload("https://example.com")
+    lead_store.save_lead.assert_called_once_with(
+        contact_name="Test User",
+        email="test@example.com",
+        website_url="https://example.com",
+    )
 
 
 def test_audit_runner_receives_exact_arguments():
@@ -53,16 +71,18 @@ def test_audit_runner_receives_exact_arguments():
     envelope_limiter.allow.return_value = (True, 0)
     audit_limiter = MagicMock(spec=SlidingWindowRateLimiter)
     gate = MagicMock(spec=ConcurrencyGate)
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
 
     app = public_api.create_app(
         envelope_limiter=envelope_limiter,
         audit_limiter=audit_limiter,
         gate=gate,
         audit_runner=fake_runner,
+        lead_store=lead_store,
     )
     client = TestClient(app)
 
-    response = client.post("/api/audit", json={"url": "https://example.com/test"})
+    response = client.post("/api/audit", json=make_capture_body("https://example.com/test"))
     assert response.status_code == 200
     assert captured["url"] == "https://example.com/test"
     assert captured["client_key"] in ("testclient", "127.0.0.1", "<unknown>")
@@ -120,7 +140,7 @@ def test_wrong_content_type():
 
     response = client.post(
         "/api/audit",
-        content=b'{"url":"https://example.com"}',
+        content=b'{"url":"https://example.com","contact_name":"Alice","email":"alice@example.com"}',
         headers={"Content-Type": "text/plain"},
     )
     assert response.status_code == 400
@@ -133,7 +153,7 @@ def test_missing_content_type():
 
     response = client.post(
         "/api/audit",
-        content=b'{"url":"https://example.com"}',
+        content=b'{"url":"https://example.com","contact_name":"Alice","email":"alice@example.com"}',
         headers={},
     )
     assert response.status_code == 400
@@ -147,7 +167,7 @@ def test_oversized_content_length():
 
     response = client.post(
         "/api/audit",
-        content=b'{"url":"https://example.com"}',
+        content=b'{"url":"https://example.com","contact_name":"Alice","email":"alice@example.com"}',
         headers={
             "Content-Type": "application/json",
             "Content-Length": "10000",
@@ -163,7 +183,7 @@ def test_oversized_streamed_body():
     app = public_api.create_app(audit_runner=audit_runner)
     client = TestClient(app)
 
-    huge_body = b'{"url":"' + (b"a" * 5000) + b'"}'
+    huge_body = b'{"url":"' + (b"a" * 5000) + b'","contact_name":"Alice","email":"alice@example.com"}'
     response = client.post(
         "/api/audit",
         content=huge_body,
@@ -178,7 +198,7 @@ def test_missing_url_key():
     app = public_api.create_app()
     client = TestClient(app)
 
-    response = client.post("/api/audit", json={"not_url": "https://example.com"})
+    response = client.post("/api/audit", json={"not_url": "https://example.com", "contact_name": "A", "email": "a@example.com"})
     assert response.status_code == 400
     assert response.json() == {"ok": False, "code": public_api.INVALID_REQUEST}
 
@@ -187,7 +207,7 @@ def test_extra_json_keys():
     app = public_api.create_app()
     client = TestClient(app)
 
-    # Legacy with extra key
+    # Missing contact keys with extra key
     response = client.post(
         "/api/audit",
         json={"url": "https://example.com", "admin": True},
@@ -210,35 +230,47 @@ def test_extra_json_keys():
 
 
 def test_non_string_url():
-    app = public_api.create_app()
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
+    app = public_api.create_app(lead_store=lead_store)
     client = TestClient(app)
 
-    response = client.post("/api/audit", json={"url": 12345})
+    response = client.post(
+        "/api/audit",
+        json={
+            "url": 12345,
+            "contact_name": "Test User",
+            "email": "test@example.com",
+        },
+    )
     assert response.status_code == 400
     assert response.json() == {"ok": False, "code": public_api.INVALID_REQUEST}
 
 
 def test_valid_body_preserves_url_exact_whitespace():
     passed_url = []
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
     app = public_api.create_app(
         audit_runner=lambda u, k, l, g: passed_url.append(u) or make_ok_payload(u),
+        lead_store=lead_store,
     )
     client = TestClient(app)
 
-    client.post("/api/audit", json={"url": "   example.com   "})
+    client.post("/api/audit", json=make_capture_body("   example.com   "))
     assert passed_url == ["   example.com   "]
 
 
 def test_default_client_identity_ignores_spoofed_headers():
     passed_keys = []
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
     app = public_api.create_app(
         audit_runner=lambda u, k, l, g: passed_keys.append(k) or make_ok_payload(u),
+        lead_store=lead_store,
     )
     client = TestClient(app)
 
     client.post(
         "/api/audit",
-        json={"url": "https://example.com"},
+        json=make_capture_body("https://example.com"),
         headers={
             "X-Forwarded-For": "1.2.3.4",
             "X-Real-IP": "5.6.7.8",
@@ -253,15 +285,17 @@ def test_default_client_identity_ignores_spoofed_headers():
 
 def test_configured_trusted_single_ip_header_works():
     passed_keys = []
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
     app = public_api.create_app(
         trusted_client_header="CF-Connecting-IP",
         audit_runner=lambda u, k, l, g: passed_keys.append(k) or make_ok_payload(u),
+        lead_store=lead_store,
     )
     client = TestClient(app)
 
     client.post(
         "/api/audit",
-        json={"url": "https://example.com"},
+        json=make_capture_body("https://example.com"),
         headers={"CF-Connecting-IP": "203.0.113.9"},
     )
 
@@ -270,15 +304,17 @@ def test_configured_trusted_single_ip_header_works():
 
 def test_configured_trusted_header_rejects_comma_chain():
     passed_keys = []
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
     app = public_api.create_app(
         trusted_client_header="X-Forwarded-For",
         audit_runner=lambda u, k, l, g: passed_keys.append(k) or make_ok_payload(u),
+        lead_store=lead_store,
     )
     client = TestClient(app)
 
     client.post(
         "/api/audit",
-        json={"url": "https://example.com"},
+        json=make_capture_body("https://example.com"),
         headers={"X-Forwarded-For": "203.0.113.9, 10.0.0.1"},
     )
 
@@ -289,15 +325,17 @@ def test_configured_trusted_header_rejects_comma_chain():
 
 def test_malformed_trusted_ip_falls_back_to_peer():
     passed_keys = []
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
     app = public_api.create_app(
         trusted_client_header="X-Real-IP",
         audit_runner=lambda u, k, l, g: passed_keys.append(k) or make_ok_payload(u),
+        lead_store=lead_store,
     )
     client = TestClient(app)
 
     client.post(
         "/api/audit",
-        json={"url": "https://example.com"},
+        json=make_capture_body("https://example.com"),
         headers={"X-Real-IP": "not-an-ip-address"},
     )
 
@@ -308,14 +346,16 @@ def test_malformed_trusted_ip_falls_back_to_peer():
 def test_trusted_header_read_from_env_var(monkeypatch):
     monkeypatch.setenv("LEADSCAN_TRUSTED_CLIENT_IP_HEADER", "X-Custom-Client-IP")
     passed_keys = []
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
     app = public_api.create_app(
         audit_runner=lambda u, k, l, g: passed_keys.append(k) or make_ok_payload(u),
+        lead_store=lead_store,
     )
     client = TestClient(app)
 
     client.post(
         "/api/audit",
-        json={"url": "https://example.com"},
+        json=make_capture_body("https://example.com"),
         headers={"X-Custom-Client-IP": "198.51.100.22"},
     )
 
@@ -323,16 +363,18 @@ def test_trusted_header_read_from_env_var(monkeypatch):
 
 
 def test_service_rate_limited_response():
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
     app = public_api.create_app(
         audit_runner=lambda u, k, l, g: {
             "ok": False,
             "code": public_audit.RATE_LIMITED,
             "retry_after": 25,
-        }
+        },
+        lead_store=lead_store,
     )
     client = TestClient(app)
 
-    response = client.post("/api/audit", json={"url": "https://example.com"})
+    response = client.post("/api/audit", json=make_capture_body("https://example.com"))
     assert response.status_code == 429
     assert response.headers.get("Retry-After") == "25"
     assert response.json() == {
@@ -343,46 +385,54 @@ def test_service_rate_limited_response():
 
 
 def test_service_busy_response():
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
     app = public_api.create_app(
-        audit_runner=lambda u, k, l, g: {"ok": False, "code": public_audit.BUSY}
+        audit_runner=lambda u, k, l, g: {"ok": False, "code": public_audit.BUSY},
+        lead_store=lead_store,
     )
     client = TestClient(app)
 
-    response = client.post("/api/audit", json={"url": "https://example.com"})
+    response = client.post("/api/audit", json=make_capture_body("https://example.com"))
     assert response.status_code == 503
     assert response.headers.get("Retry-After") == "1"
     assert response.json() == {"ok": False, "code": public_audit.BUSY}
 
 
 def test_service_invalid_url_response():
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
     app = public_api.create_app(
-        audit_runner=lambda u, k, l, g: {"ok": False, "code": public_audit.INVALID_URL}
+        audit_runner=lambda u, k, l, g: {"ok": False, "code": public_audit.INVALID_URL},
+        lead_store=lead_store,
     )
     client = TestClient(app)
 
-    response = client.post("/api/audit", json={"url": "https://example.com"})
+    response = client.post("/api/audit", json=make_capture_body("https://example.com"))
     assert response.status_code == 400
     assert response.json() == {"ok": False, "code": public_audit.INVALID_URL}
 
 
 def test_service_audit_timeout_response():
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
     app = public_api.create_app(
-        audit_runner=lambda u, k, l, g: {"ok": False, "code": public_audit.AUDIT_TIMEOUT}
+        audit_runner=lambda u, k, l, g: {"ok": False, "code": public_audit.AUDIT_TIMEOUT},
+        lead_store=lead_store,
     )
     client = TestClient(app)
 
-    response = client.post("/api/audit", json={"url": "https://example.com"})
+    response = client.post("/api/audit", json=make_capture_body("https://example.com"))
     assert response.status_code == 504
     assert response.json() == {"ok": False, "code": public_audit.AUDIT_TIMEOUT}
 
 
 def test_service_audit_failed_response():
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
     app = public_api.create_app(
-        audit_runner=lambda u, k, l, g: {"ok": False, "code": public_audit.AUDIT_FAILED}
+        audit_runner=lambda u, k, l, g: {"ok": False, "code": public_audit.AUDIT_FAILED},
+        lead_store=lead_store,
     )
     client = TestClient(app)
 
-    response = client.post("/api/audit", json={"url": "https://example.com"})
+    response = client.post("/api/audit", json=make_capture_body("https://example.com"))
     assert response.status_code == 500
     assert response.json() == {"ok": False, "code": public_audit.AUDIT_FAILED}
 
@@ -391,10 +441,11 @@ def test_service_unexpected_exception_fails_closed():
     def exploding_runner(u, k, l, g):
         raise RuntimeError("Internal DB connection failed on host 10.0.0.99")
 
-    app = public_api.create_app(audit_runner=exploding_runner)
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
+    app = public_api.create_app(audit_runner=exploding_runner, lead_store=lead_store)
     client = TestClient(app)
 
-    response = client.post("/api/audit", json={"url": "https://example.com"})
+    response = client.post("/api/audit", json=make_capture_body("https://example.com"))
     assert response.status_code == 500
     assert response.json() == {"ok": False, "code": public_audit.AUDIT_FAILED}
     assert "10.0.0.99" not in response.text
@@ -402,12 +453,14 @@ def test_service_unexpected_exception_fails_closed():
 
 
 def test_unknown_service_code_fails_closed_to_500():
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
     app = public_api.create_app(
-        audit_runner=lambda u, k, l, g: {"ok": False, "code": "some_alien_code"}
+        audit_runner=lambda u, k, l, g: {"ok": False, "code": "some_alien_code"},
+        lead_store=lead_store,
     )
     client = TestClient(app)
 
-    response = client.post("/api/audit", json={"url": "https://example.com"})
+    response = client.post("/api/audit", json=make_capture_body("https://example.com"))
     assert response.status_code == 500
     assert response.json() == {"ok": False, "code": public_audit.AUDIT_FAILED}
 
@@ -446,7 +499,7 @@ def test_draining_endpoint_returns_503_busy():
     app = public_api.create_app(worker_state=ws)
     client = TestClient(app)
 
-    response = client.post("/api/audit", json={"url": "https://example.com"})
+    response = client.post("/api/audit", json=make_capture_body("https://example.com"))
     assert response.status_code == 503
     assert response.headers.get("Retry-After") == "1"
     assert response.headers.get("Cache-Control") == "no-store"
@@ -463,7 +516,7 @@ def test_draining_runs_before_envelope_limiter():
     app = public_api.create_app(worker_state=ws, envelope_limiter=envelope_limiter)
     client = TestClient(app)
 
-    response = client.post("/api/audit", json={"url": "https://example.com"})
+    response = client.post("/api/audit", json=make_capture_body("https://example.com"))
     assert response.status_code == 503
     assert response.json() == {"ok": False, "code": public_audit.BUSY}
 
@@ -493,18 +546,19 @@ def test_draining_does_not_call_audit_runner():
     app = public_api.create_app(worker_state=ws, audit_runner=audit_runner)
     client = TestClient(app)
 
-    client.post("/api/audit", json={"url": "https://example.com"})
+    client.post("/api/audit", json=make_capture_body("https://example.com"))
     audit_runner.assert_not_called()
 
 
 def test_fastapi_lifespan_calls_begin_draining_on_shutdown():
     ws = public_api.WorkerState()
-    app = public_api.create_app(worker_state=ws)
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
+    app = public_api.create_app(worker_state=ws, lead_store=lead_store)
 
     assert ws.accepting is True
     with TestClient(app) as client:
         assert ws.accepting is True
-        res = client.post("/api/audit", json={"url": "https://example.com"})
+        res = client.post("/api/audit", json=make_capture_body("https://example.com"))
 
     # On context exit, lifespan shutdown hook drains worker
     assert ws.accepting is False
@@ -517,22 +571,22 @@ def test_invalid_audit_wait_seconds_raises_value_error():
 
 
 def test_http_timeout_while_audit_runner_blocks():
-    import threading
-
     event = threading.Event()
 
     def blocking_runner(submitted_url, client_key, audit_limiter, gate):
         event.wait(timeout=2.0)
         return make_ok_payload(submitted_url)
 
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
     app = public_api.create_app(
         audit_runner=blocking_runner,
+        lead_store=lead_store,
         audit_wait_seconds=0.05,
     )
     client = TestClient(app)
 
     try:
-        response = client.post("/api/audit", json={"url": "https://example.com"})
+        response = client.post("/api/audit", json=make_capture_body("https://example.com"))
         assert response.status_code == 504
         assert response.json() == {"ok": False, "code": public_audit.AUDIT_TIMEOUT}
     finally:
@@ -542,18 +596,20 @@ def test_http_timeout_while_audit_runner_blocks():
 def test_http_timeout_covers_body_parsing(monkeypatch):
     async def slow_read_audit_request(request):
         await asyncio.sleep(0.1)
-        return "https://example.com", False, "", ""
+        return "https://example.com", "Alice", "alice@example.com"
 
     monkeypatch.setattr(public_api, "_read_audit_request", slow_read_audit_request)
 
     audit_runner = MagicMock()
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
     app = public_api.create_app(
         audit_runner=audit_runner,
+        lead_store=lead_store,
         audit_wait_seconds=0.03,
     )
     client = TestClient(app)
 
-    response = client.post("/api/audit", json={"url": "https://example.com"})
+    response = client.post("/api/audit", json=make_capture_body("https://example.com"))
     assert response.status_code == 504
     assert response.json() == {"ok": False, "code": public_audit.AUDIT_TIMEOUT}
     audit_runner.assert_not_called()
@@ -575,10 +631,11 @@ def test_oversized_service_response_fails_closed():
             },
         }
 
-    app = public_api.create_app(audit_runner=oversized_runner)
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
+    app = public_api.create_app(audit_runner=oversized_runner, lead_store=lead_store)
     client = TestClient(app)
 
-    response = client.post("/api/audit", json={"url": "https://example.com"})
+    response = client.post("/api/audit", json=make_capture_body("https://example.com"))
     assert response.status_code == 500
     assert response.json() == {"ok": False, "code": public_audit.AUDIT_FAILED}
     assert len(response.content) <= public_api.MAX_RESPONSE_BODY_BYTES
@@ -595,10 +652,11 @@ def test_audit_response_serialization_failure_fails_closed():
             "result": {"bad": Unserializable()},
         }
 
-    app = public_api.create_app(audit_runner=bad_runner)
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
+    app = public_api.create_app(audit_runner=bad_runner, lead_store=lead_store)
     client = TestClient(app)
 
-    response = client.post("/api/audit", json={"url": "https://example.com"})
+    response = client.post("/api/audit", json=make_capture_body("https://example.com"))
     assert response.status_code == 500
     assert response.json() == {"ok": False, "code": public_audit.AUDIT_FAILED}
 
@@ -619,12 +677,12 @@ def test_procfile_contents_and_single_worker():
 
 
 # ==============================================================================
-# Task 9C-5B Lead Capture Integration Tests
+# Task 9C-5B / 9C-5C1 Lead Capture Integration Tests
 # ==============================================================================
 
 
-def test_legacy_url_only_request_does_not_capture_lead():
-    audit_runner = MagicMock(return_value=make_ok_payload("https://example.com"))
+def test_url_only_request_is_rejected_before_audit_or_capture():
+    audit_runner = MagicMock()
     lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
 
     app = public_api.create_app(
@@ -635,9 +693,10 @@ def test_legacy_url_only_request_does_not_capture_lead():
 
     response = client.post("/api/audit", json={"url": "https://example.com"})
 
-    assert response.status_code == 200
-    assert response.json() == make_ok_payload("https://example.com")
-    audit_runner.assert_called_once()
+    assert response.status_code == 400
+    assert response.headers.get("Cache-Control") == "no-store"
+    assert response.json() == {"ok": False, "code": public_api.INVALID_REQUEST}
+    audit_runner.assert_not_called()
     lead_store.save_lead.assert_not_called()
 
 
@@ -948,11 +1007,7 @@ def test_env_whitespace_means_disabled(monkeypatch):
     # Capture request fails with 500 when store is disabled
     response = client.post(
         "/api/audit",
-        json={
-            "url": "https://example.com",
-            "contact_name": "Bob Owner",
-            "email": "bob@example.com",
-        },
+        json=make_capture_body("https://example.com"),
     )
     assert response.status_code == 500
     assert response.json() == {
@@ -960,11 +1015,6 @@ def test_env_whitespace_means_disabled(monkeypatch):
         "code": public_api.LEAD_CAPTURE_FAILED,
     }
     audit_runner.assert_not_called()
-
-    # Legacy request still succeeds
-    legacy_response = client.post("/api/audit", json={"url": "https://example.com"})
-    assert legacy_response.status_code == 200
-    assert legacy_response.json() == make_ok_payload("https://example.com")
 
 
 def test_success_response_does_not_add_capture_metadata():
