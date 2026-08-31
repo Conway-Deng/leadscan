@@ -56,3 +56,83 @@ jobs:
         run: python -m playwright install --with-deps chromium
       - name: Run real-browser integration test
         run: python -m pytest tests/test_browser_integration.py -q
+
+  worker-container-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build worker container
+        run: |
+          IMAGE="leadscan-worker-ci:${GITHUB_SHA}"
+          docker build \
+            --pull \
+            --file Dockerfile.worker \
+            --tag "$IMAGE" \
+            .
+
+      - name: Verify worker image contents
+        run: |
+          IMAGE="leadscan-worker-ci:${GITHUB_SHA}"
+
+          docker run --rm \
+            --entrypoint /bin/sh \
+            "$IMAGE" \
+            -c '
+              set -eu
+
+              id pwuser >/dev/null
+
+              command -v gosu >/dev/null
+              command -v iptables >/dev/null
+              command -v ip6tables >/dev/null
+
+              test -x /app/deploy/fly/apply-egress-firewall.sh
+              test -x /app/deploy/fly/start-worker.sh
+
+              python -c "import importlib.metadata as m; assert m.version(\"playwright\") == \"1.62.0\""
+
+              test ! -e /app/tests
+              test ! -e /app/site
+              test ! -e /app/.git
+              test ! -e /app/.env
+              test ! -e /app/netlify.toml
+            '
+
+      - name: Verify worker entrypoint
+        run: |
+          IMAGE="leadscan-worker-ci:${GITHUB_SHA}"
+
+          ENTRYPOINT="$(docker image inspect \
+            --format '{{json .Config.Entrypoint}}' \
+            "$IMAGE")"
+
+          echo "entrypoint=$ENTRYPOINT"
+
+          test "$ENTRYPOINT" = '["/app/deploy/fly/start-worker.sh"]'
+
+      - name: Launch Chromium as pwuser
+        run: |
+          IMAGE="leadscan-worker-ci:${GITHUB_SHA}"
+
+          docker run --rm \
+            --ipc=host \
+            --user pwuser:pwuser \
+            --env HOME=/home/pwuser \
+            --entrypoint python \
+            "$IMAGE" \
+            -c '
+from playwright.sync_api import sync_playwright
+
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    page = browser.new_page()
+    page.set_content("<title>LeadScan Worker CI</title>")
+    assert page.title() == "LeadScan Worker CI"
+    browser.close()
+
+print("non_root_chromium=PASS")
+'
