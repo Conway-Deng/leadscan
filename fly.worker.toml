@@ -1,0 +1,31 @@
+# Fly.io configuration for LeadScan worker
+# Note: "app = ..." is omitted intentionally; app name is configured during fly launch/deploy.
+
+primary_region = "sin"
+
+kill_signal = "SIGTERM"
+kill_timeout = 120
+
+[build]
+  dockerfile = "Dockerfile.worker"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[http_service.concurrency]
+  type = "requests"
+  soft_limit = 2
+  hard_limit = 8
+
+[http_service.http_options]
+  idle_timeout = 600
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "1gb"
+  persist_rootfs = "never"

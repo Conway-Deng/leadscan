@@ -1,0 +1,31 @@
+FROM mcr.microsoft.com/playwright/python:v1.62.0-noble
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+# Install privilege drop (gosu) and kernel packet filtering tools (iptables)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gosu iptables && \
+    rm -rf /var/lib/apt/lists/*
+
+# Verify base image provides standard non-root pwuser
+RUN id pwuser >/dev/null 2>&1
+
+# Install Python dependencies pinned to exact Docker browser version
+COPY requirements.txt /app/requirements.txt
+RUN python -m pip install --no-cache-dir \
+    -r requirements.txt \
+    "playwright==1.62.0"
+
+# Copy application source
+COPY . /app
+
+# Ensure startup and firewall scripts are executable
+RUN chmod +x /app/deploy/fly/apply-egress-firewall.sh /app/deploy/fly/start-worker.sh
+
+EXPOSE 8080
+
+ENTRYPOINT ["/app/deploy/fly/start-worker.sh"]
