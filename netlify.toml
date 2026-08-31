@@ -1,6 +1,19 @@
 [build]
   publish = "site"
 
+# ---------------------------------------------------------------------------
+# Production Deployment Notes for Independent Worker Wiring:
+# ---------------------------------------------------------------------------
+# Before deploying to production with an independently hosted worker:
+# 1. Update site/index.html meta tag 'leadscan-api-origin' to the exact HTTPS
+#    origin of the worker service.
+# 2. Replace 'https://leadscan-worker.example.invalid' in connect-src below
+#    with the SAME exact HTTPS worker origin.
+# 3. Separately configure the worker's LEADSCAN_ALLOWED_ORIGIN environment
+#    variable to match this public Netlify site's exact HTTPS origin.
+# Note: This repository does not contain real production hostnames.
+# ---------------------------------------------------------------------------
+
 [[headers]]
   for = "/*"
 
@@ -9,4 +22,4 @@
     Referrer-Policy = "no-referrer"
     X-Frame-Options = "DENY"
     Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
-    Content-Security-Policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+    Content-Security-Policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://leadscan-worker.example.invalid; img-src 'self' data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"

@@ -338,3 +338,124 @@ def test_public_frontend_lead_capture_failure_recovers_in_real_chromium(
                 assert parsed.hostname == "127.0.0.1", f"Unexpected external request: {req_url}"
     finally:
         page.close()
+
+
+def test_public_frontend_configured_worker_origin_in_real_chromium(
+    local_frontend_url,
+    frontend_chromium,
+):
+    page = frontend_chromium.new_page()
+    try:
+        captured = {}
+        captured_urls = []
+        page.on("request", lambda req: captured_urls.append(req.url))
+
+        report_html = (
+            "<!doctype html>"
+            "<html><body>"
+            '<h1 id="mock-report">Mock Cross-Origin LeadScan report</h1>'
+            "<p>Browser cross-origin E2E report body.</p>"
+            "</body></html>"
+        )
+
+        def handle_cross_origin_audit(route):
+            req = route.request
+            captured["method"] = req.method
+            captured["url"] = req.url
+            captured["headers"] = req.headers
+            captured["post_data"] = req.post_data_json
+            response_payload = {
+                "ok": True,
+                "code": "ok",
+                "result": {
+                    "url": "https://example.com",
+                    "final_url": "https://example.com/home",
+                    "score": 87,
+                    "tier": "strong",
+                    "hook": "A concrete cross-origin opening line.",
+                    "report_html": report_html,
+                },
+            }
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(response_payload),
+            )
+
+        page.route("https://worker.example/api/audit", handle_cross_origin_audit)
+
+        page.goto(local_frontend_url)
+        assert page.title() == "LeadScan — Free Website Review"
+
+        # Update meta leadscan-api-origin to https://worker.example/ before submitting
+        page.eval_on_selector(
+            'meta[name="leadscan-api-origin"]',
+            'el => el.setAttribute("content", "https://worker.example/")',
+        )
+
+        url_input = page.locator("#website-url")
+        url_input.fill("example.com")
+
+        name_input = page.locator("#contact-name")
+        name_input.fill("Alice Owner")
+
+        email_input = page.locator("#contact-email")
+        email_input.fill("alice@example.com")
+
+        submit_btn = page.locator("#audit-submit")
+        submit_btn.click()
+
+        status_el = page.locator("#audit-status")
+        expect(status_el).to_have_text("Review complete.")
+
+        # Intercepted cross-origin request verification
+        assert captured["method"] == "POST"
+        assert captured["url"] == "https://worker.example/api/audit"
+        assert captured["post_data"] == {
+            "url": "example.com",
+            "contact_name": "Alice Owner",
+            "email": "alice@example.com",
+        }
+        content_type_header = {k.lower(): v for k, v in captured["headers"].items()}.get("content-type", "")
+        assert "application/json" in content_type_header
+
+        # Success DOM verification
+        expect(page.locator("#audit-form")).to_be_hidden()
+        expect(page.locator("#audit-result")).to_be_visible()
+        expect(page.locator("#result-score")).to_have_text("87")
+        expect(page.locator("#result-tier")).to_have_text("strong")
+        expect(page.locator("#result-hook")).to_have_text("A concrete cross-origin opening line.")
+
+        # Report srcdoc + iframe render verification
+        iframe_srcdoc = page.eval_on_selector("#report-preview", "el => el.srcdoc")
+        assert iframe_srcdoc == report_html
+
+        frame = page.frame_locator("#report-preview")
+        expect(frame.locator("#mock-report")).to_have_text("Mock Cross-Origin LeadScan report")
+
+        # Verify invalid configured origin fails closed without sending fetch
+        page.locator("#audit-reset").click()
+        expect(page.locator("#audit-form")).to_be_visible()
+
+        page.eval_on_selector(
+            'meta[name="leadscan-api-origin"]',
+            'el => el.setAttribute("content", "https://invalid.example/non-root-path")',
+        )
+        url_input.fill("example.com")
+        email_input.fill("alice@example.com")
+        submit_btn.click()
+
+        expect(status_el).to_contain_text("temporarily unavailable")
+        expect(page.locator("#audit-form")).to_be_visible()
+        expect(url_input).to_be_enabled()
+        expect(email_input).to_be_enabled()
+        expect(submit_btn).to_be_enabled()
+
+        # External network check: only 127.0.0.1 and intercepted https://worker.example/api/audit allowed
+        for req_url in captured_urls:
+            if req_url.startswith(("http://", "https://")):
+                parsed = urllib.parse.urlparse(req_url)
+                if parsed.hostname != "127.0.0.1":
+                    assert req_url == "https://worker.example/api/audit", f"Unexpected external request: {req_url}"
+    finally:
+        page.close()

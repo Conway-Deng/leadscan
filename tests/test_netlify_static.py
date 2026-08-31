@@ -35,7 +35,12 @@ def test_no_redirect_or_proxy_configuration():
     assert "[[redirects]]" not in content
     assert "/api/audit" not in content
     assert "http://" not in content
-    assert "https://" not in content
+
+    allowed_worker_placeholder = "https://leadscan-worker.example.invalid"
+    assert allowed_worker_placeholder in content
+    content_without_placeholder = content.replace(allowed_worker_placeholder, "")
+    assert "https://" not in content_without_placeholder
+
 
 
 def test_headers_rule_and_security_headers():

@@ -22,9 +22,52 @@
     audit_timeout: "The website took too long to review. Please try again later.",
     audit_failed: "The website could not be reviewed right now. Please try again later.",
     lead_capture_failed: "We could not save your contact details. Please try again later.",
+    configuration: "The review service is temporarily unavailable. Please try again later.",
     generic: "The review service returned an unexpected response. Please try again.",
     network: "Could not reach the review service. Check your connection and try again."
   };
+
+  function resolveAuditEndpoint() {
+    const meta = document.querySelector('meta[name="leadscan-api-origin"]');
+    if (!meta) {
+      return null;
+    }
+
+    const raw = meta.getAttribute("content") || "";
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return "/api/audit";
+    }
+
+    if (trimmed.includes("*") || trimmed.includes(",") || trimmed.includes("\\")) {
+      return null;
+    }
+
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.protocol !== "https:") {
+        return null;
+      }
+      if (!parsed.hostname) {
+        return null;
+      }
+      if (parsed.username || parsed.password) {
+        return null;
+      }
+      if (parsed.search || parsed.hash) {
+        return null;
+      }
+      if (parsed.pathname !== "/" && parsed.pathname !== "") {
+        return null;
+      }
+      if (!parsed.origin || parsed.origin === "null") {
+        return null;
+      }
+      return parsed.origin + "/api/audit";
+    } catch (e) {
+      return null;
+    }
+  }
 
   function setStatus(message) {
     auditStatus.textContent = message;
@@ -79,11 +122,17 @@
       return;
     }
 
+    const auditEndpoint = resolveAuditEndpoint();
+    if (!auditEndpoint) {
+      setStatus(ERROR_MESSAGES.configuration);
+      return;
+    }
+
     setLoading(true);
     let isCompletedSuccess = false;
 
     try {
-      const response = await fetch("/api/audit", {
+      const response = await fetch(auditEndpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
