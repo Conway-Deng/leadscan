@@ -1134,3 +1134,126 @@ def test_capture_save_runs_after_audit_wait_boundary(monkeypatch):
 
     assert response.status_code == 200
     assert events == ["wait_enter", "audit", "wait_exit", "save"]
+
+
+# ==============================================================================
+# Task 9C-5E-A CORS Support Tests
+# ==============================================================================
+
+
+def test_cors_is_disabled_when_no_allowed_origin_is_configured(monkeypatch):
+    monkeypatch.delenv("LEADSCAN_ALLOWED_ORIGIN", raising=False)
+    app = public_api.create_app()
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/audit",
+        headers={"Origin": "https://example.net"},
+        json={"invalid": "payload"},
+    )
+    assert "Access-Control-Allow-Origin" not in response.headers
+
+
+def test_exact_allowed_origin_receives_cors_preflight():
+    app = public_api.create_app(allowed_origin="https://leadscan.example")
+    client = TestClient(app)
+
+    response = client.options(
+        "/api/audit",
+        headers={
+            "Origin": "https://leadscan.example",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers.get("Access-Control-Allow-Origin") == "https://leadscan.example"
+    allow_methods = response.headers.get("Access-Control-Allow-Methods", "")
+    assert "POST" in allow_methods
+    allow_headers = response.headers.get("Access-Control-Allow-Headers", "").lower()
+    assert "content-type" in allow_headers
+    assert response.headers.get("Access-Control-Allow-Credentials") not in ("true", True)
+    assert response.headers.get("Access-Control-Allow-Origin") != "*"
+
+
+def test_exact_allowed_origin_receives_cors_on_audit_response():
+    audit_runner = MagicMock(return_value=make_ok_payload("https://example.com"))
+    lead_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
+
+    app = public_api.create_app(
+        audit_runner=audit_runner,
+        lead_store=lead_store,
+        allowed_origin="https://leadscan.example",
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/audit",
+        headers={"Origin": "https://leadscan.example"},
+        json=make_capture_body("https://example.com"),
+    )
+
+    assert response.status_code == 200
+    assert response.headers.get("Access-Control-Allow-Origin") == "https://leadscan.example"
+    assert response.json() == make_ok_payload("https://example.com")
+    lead_store.save_lead.assert_called_once_with(
+        contact_name="Test User",
+        email="test@example.com",
+        website_url="https://example.com",
+    )
+
+
+def test_unlisted_origin_does_not_receive_cors_permission():
+    app = public_api.create_app(allowed_origin="https://leadscan.example")
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/audit",
+        headers={"Origin": "https://evil.example"},
+        json={"invalid": "payload"},
+    )
+    assert response.headers.get("Access-Control-Allow-Origin") != "https://evil.example"
+    assert response.headers.get("Access-Control-Allow-Origin") != "*"
+
+
+def test_allowed_origin_can_be_loaded_from_environment(monkeypatch):
+    monkeypatch.setenv("LEADSCAN_ALLOWED_ORIGIN", "  https://leadscan.example/  ")
+    app = public_api.create_app()
+    client = TestClient(app)
+
+    response = client.options(
+        "/api/audit",
+        headers={
+            "Origin": "https://leadscan.example",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers.get("Access-Control-Allow-Origin") == "https://leadscan.example"
+
+
+@pytest.mark.parametrize(
+    "invalid_origin",
+    [
+        "*",
+        "https://*.netlify.app",
+        "http://example.net",
+        "https://example.net/path",
+        "https://example.net/?x=1",
+        "https://example.net/#x",
+        "https://user@example.net",
+        "https://example.net,https://evil.example",
+    ],
+)
+def test_invalid_allowed_origin_configuration_fails_closed(invalid_origin):
+    with pytest.raises(ValueError):
+        public_api.create_app(allowed_origin=invalid_origin)
+
+
+def test_static_no_wildcard_cors_in_production_source():
+    from pathlib import Path
+    source = Path("public_api.py").read_text(encoding="utf-8")
+    assert 'allow_origins=["*"]' not in source
+    assert "allow_origins=['*']" not in source
+    assert "LEADSCAN_ALLOWED_ORIGIN" in source

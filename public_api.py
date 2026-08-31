@@ -42,6 +42,11 @@ SECURITY & ARCHITECTURE NOTES:
    - Production deployments still require edge rate limiting and Task 8A network egress restrictions.
 8. No Unauthenticated Open API Surface:
    FastAPI automatic documentation (/docs, /redoc, /openapi.json) is disabled.
+9. Cross-Origin Resource Sharing (CORS):
+   - When configured with an exact HTTPS allowed origin, standard FastAPI CORSMiddleware
+     grants browser access strictly for POST /api/audit with Content-Type header.
+   - Wildcards, multi-origin lists, credentials, and non-HTTPS schemes are strictly rejected.
+   - CORS is a browser transport permission only and is never treated as authentication.
 """
 
 import asyncio
@@ -50,8 +55,10 @@ import ipaddress
 import json
 import os
 import threading
+import urllib.parse
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 import lead_capture
@@ -128,6 +135,51 @@ def _client_identity(request, trusted_header=None):
         return str(ip)
     except ValueError:
         return peer_host
+
+
+def _normalize_allowed_origin(raw_origin):
+    """
+    Validate and normalize a configured CORS allowed origin.
+
+    Returns:
+        str or None: Normalized HTTPS origin (e.g. 'https://example.net') or None if omitted/blank.
+
+    Raises:
+        ValueError: If origin configuration is malformed, wildcarded, or not strict HTTPS.
+    """
+    if raw_origin is None:
+        return None
+    if not isinstance(raw_origin, str):
+        raise ValueError(f"Allowed origin must be a string, got {type(raw_origin).__name__}")
+
+    trimmed = raw_origin.strip()
+    if not trimmed:
+        return None
+
+    if "*" in trimmed or "," in trimmed:
+        raise ValueError(f"Invalid allowed origin (wildcards and lists forbidden): {raw_origin!r}")
+
+    try:
+        parsed = urllib.parse.urlsplit(trimmed)
+    except Exception:
+        raise ValueError(f"Invalid allowed origin: {raw_origin!r}")
+
+    if parsed.scheme != "https":
+        raise ValueError(f"Allowed origin must use https scheme: {raw_origin!r}")
+
+    if not parsed.hostname or not parsed.netloc:
+        raise ValueError(f"Allowed origin must contain a valid hostname: {raw_origin!r}")
+
+    if parsed.username or parsed.password:
+        raise ValueError(f"Allowed origin must not contain user credentials: {raw_origin!r}")
+
+    if parsed.query or parsed.fragment:
+        raise ValueError(f"Allowed origin must not contain query or fragment: {raw_origin!r}")
+
+    if parsed.path not in ("", "/"):
+        raise ValueError(f"Allowed origin must not contain path: {raw_origin!r}")
+
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 def _validate_contact_name(raw_name):
@@ -294,6 +346,7 @@ def create_app(
     worker_state=None,
     audit_wait_seconds=AUDIT_HTTP_WAIT_SECONDS,
     lead_store=None,
+    allowed_origin=None,
 ):
     """
     Application factory for the public audit FastAPI service.
@@ -301,6 +354,12 @@ def create_app(
     if isinstance(audit_wait_seconds, bool) or not isinstance(audit_wait_seconds, (int, float)) or audit_wait_seconds <= 0:
         raise ValueError(f"audit_wait_seconds must be a number > 0, got {audit_wait_seconds!r}")
     audit_wait_seconds = float(audit_wait_seconds)
+
+    if allowed_origin is None:
+        raw_allowed_origin = os.getenv("LEADSCAN_ALLOWED_ORIGIN", "")
+        normalized_origin = _normalize_allowed_origin(raw_allowed_origin)
+    else:
+        normalized_origin = _normalize_allowed_origin(allowed_origin)
 
     worker_state = worker_state or WorkerState()
 
@@ -345,6 +404,15 @@ def create_app(
         openapi_url=None,
         lifespan=lifespan,
     )
+
+    if normalized_origin is not None:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=[normalized_origin],
+            allow_credentials=False,
+            allow_methods=["POST"],
+            allow_headers=["Content-Type"],
+        )
 
     @app.post("/api/audit")
     async def audit_endpoint(request: Request):
