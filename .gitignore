@@ -50,3 +50,6 @@ out/
 # Generated private lead/report output
 /reports/
 /crm_import.csv
+
+# Netlify local CLI state
+.netlify/

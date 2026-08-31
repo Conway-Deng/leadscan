@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LeadScan — Free Website Review</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="container">
+    <header class="header">
+      <h1 class="brand">LeadScan</h1>
+      <p class="tagline">See what may be getting in the way of website enquiries.</p>
+    </header>
+
+    <section class="description-section">
+      <p class="description">
+        Enter a business website. LeadScan checks a small set of observable website signals and returns a short review. It does not inspect advertising accounts, search rankings, analytics, or private business data.
+      </p>
+    </section>
+
+    <section class="audit-card">
+      <form id="audit-form" class="audit-form">
+        <label for="website-url" class="form-label">Website address</label>
+        <div class="input-group">
+          <input
+            id="website-url"
+            class="form-input"
+            type="text"
+            inputmode="url"
+            autocomplete="url"
+            maxlength="2048"
+            placeholder="example.com"
+            required
+          >
+          <button id="audit-submit" class="submit-btn" type="submit">Review website</button>
+        </div>
+        <p class="expectation-text">The review can take up to about 1–2 minutes.</p>
+      </form>
+
+      <div id="audit-status" class="status-region" role="status" aria-live="polite"></div>
+
+      <section id="audit-result" class="result-section" hidden>
+        <div class="result-summary">
+          <div class="summary-card">
+            <span class="summary-label">Score</span>
+            <span id="result-score" class="summary-value"></span>
+          </div>
+          <div class="summary-card">
+            <span class="summary-label">Tier</span>
+            <span id="result-tier" class="summary-value"></span>
+          </div>
+          <div class="summary-card summary-card-full">
+            <span class="summary-label">Suggested opening line</span>
+            <p id="result-hook" class="summary-text"></p>
+          </div>
+        </div>
+
+        <div class="preview-container">
+          <iframe
+            id="report-preview"
+            class="report-frame"
+            sandbox
+            referrerpolicy="no-referrer"
+            title="Website review report preview"
+          ></iframe>
+        </div>
+
+        <div class="reset-container">
+          <button id="audit-reset" class="reset-btn" type="button">Review another website</button>
+        </div>
+      </section>
+    </section>
+  </main>
+</body>
+</html>
