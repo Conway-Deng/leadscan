@@ -171,6 +171,22 @@ def test_obvious_unsafe_url_rejected_before_gate():
     gate.try_acquire.assert_not_called()
 
 
+def test_explicit_unsupported_port_rejected_before_gate():
+    limiter = MagicMock(spec=SlidingWindowRateLimiter)
+    limiter.allow.return_value = (True, 0)
+    gate = MagicMock(spec=ConcurrencyGate)
+
+    res = public_audit.run_public_audit(
+        "https://example.com:8443",
+        "client-1",
+        limiter,
+        gate,
+    )
+    assert res == {"ok": False, "code": public_audit.INVALID_URL}
+    gate.try_acquire.assert_not_called()
+
+
+
 def test_busy_gate_returns_busy_without_creating_browser():
     limiter = MagicMock(spec=SlidingWindowRateLimiter)
     limiter.allow.return_value = (True, 0)

@@ -31,6 +31,7 @@ class UnsafeURL(ValueError):
 
 
 _ALLOWED_SCHEMES = {"http", "https"}
+_ALLOWED_PUBLIC_PORTS = {80, 443}
 _LOCAL_HOST_SUFFIXES = (
     ".localhost",
     ".local",
@@ -94,9 +95,13 @@ def prepare_public_url(value):
         raise UnsafeURL("URL credentials are not permitted")
 
     try:
-        _ = parts.port
+        port = parts.port
     except ValueError as exc:
         raise UnsafeURL(f"Invalid port: {exc}") from exc
+
+    if port is not None and port not in _ALLOWED_PUBLIC_PORTS:
+        raise UnsafeURL(f"URL port is not permitted: {port}")
+
 
     host_lower = host.lower()
 

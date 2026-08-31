@@ -27,11 +27,15 @@ def _make_fake_resolver(ip_list):
         ("example.com", "https://example.com"),
         ("https://123.com", "https://123.com"),
         ("https://8.8.8.8", "https://8.8.8.8"),
-        ("https://example.com:8443/path", "https://example.com:8443/path"),
+        ("http://example.com:80/path", "http://example.com:80/path"),
+        ("https://example.com:443/path", "https://example.com:443/path"),
+        ("https://example.com:80/path", "https://example.com:80/path"),
+        ("http://example.com:443/path", "http://example.com:443/path"),
     ],
 )
 def test_prepare_public_url_accepts_valid_inputs(raw_input, expected):
     assert prepare_public_url(raw_input) == expected
+
 
 
 @pytest.mark.parametrize(
@@ -290,3 +294,54 @@ def test_is_public_unicast_address_classification():
     for ip_str in false_cases:
         addr = ipaddress.ip_address(ip_str)
         assert _is_public_unicast_address(addr) is False
+
+
+# ---------------------------------------------------------------------------
+# Task 9C-2: Explicit destination port restriction tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "disallowed_url",
+    [
+        "https://example.com:0",
+        "https://example.com:1",
+        "https://example.com:22",
+        "https://example.com:53",
+        "https://example.com:81",
+        "https://example.com:3000",
+        "https://example.com:8000",
+        "https://example.com:8080",
+        "https://example.com:8443",
+        "https://example.com:65535",
+    ],
+)
+def test_prepare_public_url_rejects_disallowed_explicit_ports(disallowed_url):
+    with pytest.raises(UnsafeURL):
+        prepare_public_url(disallowed_url)
+
+
+def test_prepare_public_url_ipv4_literal_ports():
+    assert prepare_public_url("https://8.8.8.8:443") == "https://8.8.8.8:443"
+    assert prepare_public_url("http://8.8.8.8:80") == "http://8.8.8.8:80"
+    with pytest.raises(UnsafeURL):
+        prepare_public_url("https://8.8.8.8:8443")
+    with pytest.raises(UnsafeURL):
+        prepare_public_url("http://8.8.8.8:8080")
+
+
+def test_prepare_public_url_ipv6_literal_ports():
+    assert prepare_public_url("https://[2606:4700:4700::1111]:443/") == "https://[2606:4700:4700::1111]:443/"
+    with pytest.raises(UnsafeURL):
+        prepare_public_url("https://[2606:4700:4700::1111]:8443/")
+
+
+def test_resolve_public_url_rejects_disallowed_port_before_dns():
+    def throwing_resolver(*args, **kwargs):
+        raise AssertionError("resolver should not run")
+
+    with pytest.raises(UnsafeURL):
+        resolve_public_url("https://example.com:8443", resolver=throwing_resolver)
+
+
+def test_allowed_public_ports_constant():
+    assert url_safety._ALLOWED_PUBLIC_PORTS == {80, 443}
