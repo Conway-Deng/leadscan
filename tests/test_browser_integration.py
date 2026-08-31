@@ -1,12 +1,15 @@
 """Real Chromium proof for the browser, detection, scoring and worker path."""
 
+import json
 import os
 import sys
 import threading
 import urllib.parse
-from http.server import HTTPServer
+from functools import partial
+from http.server import HTTPServer, SimpleHTTPRequestHandler
 
 import pytest
+from playwright.sync_api import expect, sync_playwright
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -16,6 +19,13 @@ import config  # noqa: E402
 import robots  # noqa: E402
 import runner  # noqa: E402
 import serve  # noqa: E402
+
+SITE_DIR = os.path.join(ROOT, "site")
+
+
+class QuietStaticHandler(SimpleHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass
 
 
 @pytest.fixture
@@ -31,6 +41,32 @@ def local_fixture_url():
         server.server_close()
         thread.join(timeout=5)
         assert not thread.is_alive()
+
+
+@pytest.fixture
+def local_frontend_url():
+    handler = partial(QuietStaticHandler, directory=SITE_DIR)
+    server = HTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    try:
+        yield f"http://{host}:{port}/"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+
+@pytest.fixture(scope="module")
+def frontend_chromium():
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        try:
+            yield browser
+        finally:
+            browser.close()
 
 
 def test_real_chromium_executes_javascript_through_worker_pipeline(
@@ -69,3 +105,153 @@ def test_real_chromium_executes_javascript_through_worker_pipeline(
     assert row["_findings"]["can_capture_lead"] is True
     assert "contact form" in row["_findings"]["capture_methods"]
     assert "contact form" in row["capture_methods"]
+
+
+def test_public_frontend_success_flow_in_real_chromium(
+    local_frontend_url,
+    frontend_chromium,
+):
+    page = frontend_chromium.new_page()
+    try:
+        captured = {}
+        captured_urls = []
+        page.on("request", lambda req: captured_urls.append(req.url))
+
+        report_html = (
+            "<!doctype html>"
+            "<html><body>"
+            '<h1 id="mock-report">Mock LeadScan report</h1>'
+            "<p>Browser E2E report body.</p>"
+            "</body></html>"
+        )
+
+        def handle_audit(route):
+            req = route.request
+            captured["method"] = req.method
+            captured["url"] = req.url
+            captured["headers"] = req.headers
+            captured["post_data"] = req.post_data_json
+            response_payload = {
+                "ok": True,
+                "code": "ok",
+                "result": {
+                    "url": "https://example.com",
+                    "final_url": "https://example.com/home",
+                    "score": 87,
+                    "tier": "strong",
+                    "hook": "A concrete browser-test opening line.",
+                    "report_html": report_html,
+                },
+            }
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(response_payload),
+            )
+
+        page.route("**/api/audit", handle_audit)
+
+        page.goto(local_frontend_url)
+        assert page.title() == "LeadScan — Free Website Review"
+
+        url_input = page.locator("#website-url")
+        url_input.fill("  example.com  ")
+
+        submit_btn = page.locator("#audit-submit")
+        submit_btn.click()
+
+        status_el = page.locator("#audit-status")
+        expect(status_el).to_have_text("Review complete.")
+
+        # Request verification
+        assert captured["method"] == "POST"
+        assert urllib.parse.urlparse(captured["url"]).path == "/api/audit"
+        assert captured["post_data"] == {"url": "example.com"}
+        content_type_header = {k.lower(): v for k, v in captured["headers"].items()}.get("content-type", "")
+        assert "application/json" in content_type_header
+
+        # Success DOM verification
+        expect(page.locator("#audit-form")).to_be_hidden()
+        expect(page.locator("#audit-result")).to_be_visible()
+        expect(page.locator("#result-score")).to_have_text("87")
+        expect(page.locator("#result-tier")).to_have_text("strong")
+        expect(page.locator("#result-hook")).to_have_text("A concrete browser-test opening line.")
+
+        # Report srcdoc + iframe render verification
+        iframe_srcdoc = page.eval_on_selector("#report-preview", "el => el.srcdoc")
+        assert iframe_srcdoc == report_html
+
+        frame = page.frame_locator("#report-preview")
+        expect(frame.locator("#mock-report")).to_have_text("Mock LeadScan report")
+
+        # Reset flow verification
+        page.locator("#audit-reset").click()
+        expect(page.locator("#audit-form")).to_be_visible()
+        expect(page.locator("#audit-result")).to_be_hidden()
+        expect(url_input).to_have_value("")
+        expect(url_input).to_be_enabled()
+        expect(submit_btn).to_be_enabled()
+        expect(submit_btn).to_have_text("Review website")
+        expect(status_el).to_have_text("")
+        assert page.eval_on_selector("#report-preview", "el => el.srcdoc") == ""
+        assert page.evaluate("document.activeElement === document.getElementById('website-url')") is True
+
+        # External network check
+        for req_url in captured_urls:
+            if req_url.startswith(("http://", "https://")):
+                parsed = urllib.parse.urlparse(req_url)
+                assert parsed.hostname == "127.0.0.1", f"Unexpected external request: {req_url}"
+    finally:
+        page.close()
+
+
+def test_public_frontend_rate_limit_flow_in_real_chromium(
+    local_frontend_url,
+    frontend_chromium,
+):
+    page = frontend_chromium.new_page()
+    try:
+        captured_urls = []
+        page.on("request", lambda req: captured_urls.append(req.url))
+
+        def handle_rate_limited(route):
+            response_payload = {
+                "ok": False,
+                "code": "rate_limited",
+            }
+            route.fulfill(
+                status=429,
+                headers={"Retry-After": "17"},
+                content_type="application/json",
+                body=json.dumps(response_payload),
+            )
+
+        page.route("**/api/audit", handle_rate_limited)
+
+        page.goto(local_frontend_url)
+        url_input = page.locator("#website-url")
+        url_input.fill("example.com")
+
+        submit_btn = page.locator("#audit-submit")
+        submit_btn.click()
+
+        status_el = page.locator("#audit-status")
+        expect(status_el).to_contain_text("Too many review requests have been made.")
+        expect(status_el).to_contain_text("17 seconds")
+
+        # Error recovery UI assertions
+
+        expect(page.locator("#audit-form")).to_be_visible()
+        expect(page.locator("#audit-result")).to_be_hidden()
+        expect(url_input).to_be_enabled()
+        expect(submit_btn).to_be_enabled()
+        expect(submit_btn).to_have_text("Review website")
+        expect(url_input).to_have_value("example.com")
+
+        # External network check
+        for req_url in captured_urls:
+            if req_url.startswith(("http://", "https://")):
+                parsed = urllib.parse.urlparse(req_url)
+                assert parsed.hostname == "127.0.0.1", f"Unexpected external request: {req_url}"
+    finally:
+        page.close()
