@@ -100,6 +100,8 @@ def test_prepare_public_url_rejects_local_hostnames(local_host):
         "http://192.168.1.1",
         "http://169.254.169.254",
         "http://0.0.0.0",
+        "http://224.0.0.1",
+        "http://239.255.255.250",
     ],
 )
 def test_prepare_public_url_rejects_unsafe_ipv4_literals(unsafe_ipv4):
@@ -113,6 +115,9 @@ def test_prepare_public_url_rejects_unsafe_ipv4_literals(unsafe_ipv4):
         "http://[::1]",
         "http://[fc00::1]",
         "http://[fe80::1]",
+        "http://[ff02::1]",
+        "http://[ff0e::1]",
+        "http://[fec0::1]",
     ],
 )
 def test_prepare_public_url_rejects_unsafe_ipv6_literals(unsafe_ipv6):
@@ -197,6 +202,13 @@ def test_resolve_public_url_rejects_loopback_ipv4():
         resolve_public_url("https://local.example.com", resolver=resolver)
 
 
+def test_resolve_public_url_rejects_multicast_and_site_local_dns():
+    for bad_ip in ("224.0.0.1", "ff02::1", "fec0::1"):
+        resolver = _make_fake_resolver([bad_ip])
+        with pytest.raises(UnsafeURL):
+            resolve_public_url("https://bad.example.com", resolver=resolver)
+
+
 def test_resolve_public_url_rejects_private_ipv6():
     resolver = _make_fake_resolver(["fc00::5"])
     with pytest.raises(UnsafeURL):
@@ -247,3 +259,34 @@ def test_resolve_public_url_global_literal_skips_dns():
     url, ips = resolve_public_url("https://8.8.8.8", resolver=failing_resolver)
     assert url == "https://8.8.8.8"
     assert ips == ("8.8.8.8",)
+
+
+# ---------------------------------------------------------------------------
+# Task 9B-0: Direct _is_public_unicast_address helper test
+# ---------------------------------------------------------------------------
+
+def test_is_public_unicast_address_classification():
+    import ipaddress
+    from url_safety import _is_public_unicast_address
+
+    true_cases = [
+        "8.8.8.8",
+        "2606:4700:4700::1111",
+    ]
+    for ip_str in true_cases:
+        addr = ipaddress.ip_address(ip_str)
+        assert _is_public_unicast_address(addr) is True
+
+    false_cases = [
+        "127.0.0.1",
+        "10.0.0.1",
+        "169.254.169.254",
+        "224.0.0.1",
+        "ff02::1",
+        "fec0::1",
+        "fc00::1",
+        "fe80::1",
+    ]
+    for ip_str in false_cases:
+        addr = ipaddress.ip_address(ip_str)
+        assert _is_public_unicast_address(addr) is False

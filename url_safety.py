@@ -7,7 +7,8 @@ for public audit inputs.
 SECURITY BOUNDARY NOTE:
 1. prepare_public_url() is only the first syntax/literal validation layer.
 2. resolve_public_url() resolves domain hostnames and verifies that every
-   returned IP address is globally routable.
+   returned IP address is a public unicast address (rejecting private, loopback,
+   link-local, multicast, and deprecated IPv6 site-local addresses).
 3. resolve_public_url() is still NOT sufficient by itself for a hosted browser
    service, because:
    - HTTP redirects can point to another hostname;
@@ -39,6 +40,20 @@ _LOCAL_HOST_SUFFIXES = (
     ".home.arpa",
 )
 _NUMERIC_PART_RE = re.compile(r"^(?:0x[0-9a-fA-F]+|\d+)$")
+
+
+def _is_public_unicast_address(addr):
+    """
+    Determine whether an ipaddress.IPv4Address or IPv6Address is a public unicast address.
+
+    Requires global routability and explicitly rejects multicast as well as
+    deprecated IPv6 site-local (fec0::/10) ranges.
+    """
+    return (
+        addr.is_global
+        and not addr.is_multicast
+        and not getattr(addr, "is_site_local", False)
+    )
 
 
 def prepare_public_url(value):
@@ -95,7 +110,7 @@ def prepare_public_url(value):
         addr = None
 
     if addr is not None:
-        if not addr.is_global:
+        if not _is_public_unicast_address(addr):
             raise UnsafeURL(f"Non-global IP literal is not permitted: {host_lower}")
         return prepared
 
@@ -109,14 +124,15 @@ def prepare_public_url(value):
 
 def resolve_public_url(value, resolver=None):
     """
-    Validate a public URL and ensure its hostname resolves exclusively to global IPs.
+    Validate a public URL and ensure its hostname resolves exclusively to public unicast IPs.
 
     Returns:
         tuple: (prepared_url, tuple_of_sorted_unique_canonical_ip_strings)
 
     Raises:
         UnsafeURL: If syntax validation fails, resolution fails, or any resolved
-                   IP address is non-global (private, loopback, link-local, etc.).
+                   IP address is non-public (private, loopback, link-local, multicast,
+                   deprecated site-local, etc.).
     """
     prepared = prepare_public_url(value)
     parts = urllib.parse.urlsplit(prepared)
@@ -148,7 +164,7 @@ def resolve_public_url(value, resolver=None):
         except (IndexError, TypeError, ValueError) as exc:
             raise UnsafeURL(f"Invalid DNS address record for {host}: {exc}") from exc
 
-        if not addr.is_global:
+        if not _is_public_unicast_address(addr):
             raise UnsafeURL(f"Hostname {host} resolved to non-global IP: {addr}")
 
         resolved_ips.add(str(addr))
