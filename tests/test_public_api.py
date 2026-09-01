@@ -794,6 +794,7 @@ def test_audit_failure_does_not_save_lead(error_code, expected_status):
 
 
 def test_capture_request_without_store_fails_before_audit(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("LEADSCAN_LEAD_DB_PATH", raising=False)
     audit_runner = MagicMock()
 
@@ -968,6 +969,7 @@ def test_partial_contact_bodies_rejected(partial_payload):
 
 def test_env_configured_lead_store_is_lazy_until_capture(tmp_path, monkeypatch):
     db_file = tmp_path / "private" / "leads.sqlite3"
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("LEADSCAN_LEAD_DB_PATH", str(db_file))
 
     audit_runner = MagicMock(return_value=make_ok_payload("https://example.com"))
@@ -998,6 +1000,7 @@ def test_env_configured_lead_store_is_lazy_until_capture(tmp_path, monkeypatch):
 
 
 def test_env_whitespace_means_disabled(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "   ")
     monkeypatch.setenv("LEADSCAN_LEAD_DB_PATH", "   ")
     audit_runner = MagicMock(return_value=make_ok_payload("https://example.com"))
 
@@ -1015,6 +1018,80 @@ def test_env_whitespace_means_disabled(monkeypatch):
         "code": public_api.LEAD_CAPTURE_FAILED,
     }
     audit_runner.assert_not_called()
+
+
+def test_database_url_selects_postgres_store(monkeypatch):
+    fake_store = MagicMock(spec=lead_capture.PostgresLeadStore)
+    constructor = MagicMock(return_value=fake_store)
+    monkeypatch.setattr(lead_capture, "PostgresLeadStore", constructor)
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql://user:fake-password@example.invalid/leadscan",
+    )
+    monkeypatch.delenv("LEADSCAN_LEAD_DB_PATH", raising=False)
+
+    public_api.create_app()
+
+    constructor.assert_called_once_with(
+        "postgresql://user:fake-password@example.invalid/leadscan"
+    )
+
+
+def test_without_database_url_sqlite_path_selects_sqlite(monkeypatch, tmp_path):
+    fake_store = MagicMock(spec=lead_capture.SQLiteLeadStore)
+    constructor = MagicMock(return_value=fake_store)
+    db_path = str(tmp_path / "leads.sqlite3")
+    monkeypatch.setattr(lead_capture, "SQLiteLeadStore", constructor)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("LEADSCAN_LEAD_DB_PATH", db_path)
+
+    public_api.create_app()
+
+    constructor.assert_called_once_with(db_path)
+
+
+def test_database_url_takes_precedence_over_sqlite_path(monkeypatch, tmp_path):
+    postgres_store = MagicMock(spec=lead_capture.PostgresLeadStore)
+    postgres_constructor = MagicMock(return_value=postgres_store)
+    sqlite_constructor = MagicMock()
+    database_url = "postgresql://user:fake-password@example.invalid/leadscan"
+    monkeypatch.setattr(lead_capture, "PostgresLeadStore", postgres_constructor)
+    monkeypatch.setattr(lead_capture, "SQLiteLeadStore", sqlite_constructor)
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    monkeypatch.setenv(
+        "LEADSCAN_LEAD_DB_PATH",
+        str(tmp_path / "unused.sqlite3"),
+    )
+
+    public_api.create_app()
+
+    postgres_constructor.assert_called_once_with(database_url)
+    sqlite_constructor.assert_not_called()
+
+
+def test_failed_postgres_save_withholds_successful_audit_report():
+    audit_runner = MagicMock(return_value=make_ok_payload("https://example.com"))
+    lead_store = MagicMock(spec=lead_capture.PostgresLeadStore)
+    lead_store.save_lead.side_effect = lead_capture.LeadStoreError(
+        "Failed to store lead"
+    )
+    app = public_api.create_app(
+        audit_runner=audit_runner,
+        lead_store=lead_store,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/audit",
+        json=make_capture_body("https://example.com"),
+    )
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "ok": False,
+        "code": public_api.LEAD_CAPTURE_FAILED,
+    }
+    assert "report_html" not in response.text
 
 
 def test_success_response_does_not_add_capture_metadata():

@@ -379,9 +379,14 @@ def create_app(
     audit_runner = audit_runner or public_audit.run_public_audit
 
     if lead_store is None:
+        # Hosted Postgres takes deterministic precedence when both stores are
+        # configured. SQLite remains the local/Fly-compatible fallback.
+        database_url = os.getenv("DATABASE_URL", "").strip()
         raw_lead_db_path = os.getenv("LEADSCAN_LEAD_DB_PATH", "")
         lead_db_path = raw_lead_db_path.strip()
-        if lead_db_path:
+        if database_url:
+            lead_store = lead_capture.PostgresLeadStore(database_url)
+        elif lead_db_path:
             lead_store = lead_capture.SQLiteLeadStore(lead_db_path)
 
     if trusted_client_header is None:
