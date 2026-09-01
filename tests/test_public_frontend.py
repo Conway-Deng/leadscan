@@ -9,6 +9,8 @@ INDEX_HTML = SITE_DIR / "index.html"
 STYLES_CSS = SITE_DIR / "styles.css"
 APP_JS = SITE_DIR / "app.js"
 NETLIFY_CONFIG = Path("netlify.toml")
+PRODUCTION_WORKER_ORIGIN = "https://leadscan-9fsy.onrender.com"
+WORKER_ORIGIN_PLACEHOLDER = "https://leadscan-worker.example.invalid"
 
 
 class AttributeExtractor(HTMLParser):
@@ -46,10 +48,12 @@ def test_frontend_declares_manual_worker_origin_configuration():
         if tag == "meta" and attrs.get("name") == "leadscan-api-origin"
     ]
     assert len(origin_metas) == 1
-    assert origin_metas[0].get("content") == ""
+    assert origin_metas[0].get("content") == PRODUCTION_WORKER_ORIGIN
 
     assert "http://" not in content
-    assert "https://" not in content
+    assert content.count(PRODUCTION_WORKER_ORIGIN) == 1
+    assert WORKER_ORIGIN_PLACEHOLDER not in content
+    assert not PRODUCTION_WORKER_ORIGIN.endswith("/")
 
     for tag, attrs in tags:
         if tag == "link" and attrs.get("rel") == "stylesheet":
@@ -73,7 +77,7 @@ def test_index_references_only_local_assets():
             assert not src.startswith("http://") and not src.startswith("https://")
 
     assert "http://" not in content
-    assert "https://" not in content
+    assert re.findall(r'https://[^\s"\']+', content) == [PRODUCTION_WORKER_ORIGIN]
 
 
 def test_form_and_input_elements():
@@ -238,9 +242,8 @@ def test_netlify_csp_requires_exact_manual_worker_origin():
     assert connect_match is not None, "connect-src directive not found in CSP"
     connect_sources = connect_match.group(1).split()
 
-    assert "'self'" in connect_sources
-    assert "https://leadscan-worker.example.invalid" in connect_sources
-    assert len(connect_sources) == 2
+    assert connect_sources == ["'self'", PRODUCTION_WORKER_ORIGIN]
+    assert WORKER_ORIGIN_PLACEHOLDER not in toml_content
 
     assert "*" not in connect_sources
     assert "https:" not in connect_sources
@@ -251,7 +254,7 @@ def test_netlify_csp_requires_exact_manual_worker_origin():
     lower_content = toml_content.lower()
     assert "leadscan-api-origin" in lower_content
     assert "leadscan_allowed_origin" in lower_content
-    assert "leadscan-worker.example.invalid" in lower_content
+    assert PRODUCTION_WORKER_ORIGIN in lower_content
     assert "production" in lower_content or "deploy" in lower_content
 
 

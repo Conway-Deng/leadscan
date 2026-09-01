@@ -4,6 +4,8 @@ import pytest
 
 NETLIFY_TOML = Path("netlify.toml")
 GITIGNORE = Path(".gitignore")
+PRODUCTION_WORKER_ORIGIN = "https://leadscan-9fsy.onrender.com"
+WORKER_ORIGIN_PLACEHOLDER = "https://leadscan-worker.example.invalid"
 
 
 def test_netlify_toml_exists():
@@ -36,10 +38,9 @@ def test_no_redirect_or_proxy_configuration():
     assert "/api/audit" not in content
     assert "http://" not in content
 
-    allowed_worker_placeholder = "https://leadscan-worker.example.invalid"
-    assert allowed_worker_placeholder in content
-    content_without_placeholder = content.replace(allowed_worker_placeholder, "")
-    assert "https://" not in content_without_placeholder
+    assert PRODUCTION_WORKER_ORIGIN in content
+    assert WORKER_ORIGIN_PLACEHOLDER not in content
+    assert content.count("https://") == 1
 
 
 

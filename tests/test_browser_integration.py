@@ -21,6 +21,16 @@ import runner  # noqa: E402
 import serve  # noqa: E402
 
 SITE_DIR = os.path.join(ROOT, "site")
+PRODUCTION_WORKER_ORIGIN = "https://leadscan-9fsy.onrender.com"
+PRODUCTION_AUDIT_URL = f"{PRODUCTION_WORKER_ORIGIN}/api/audit"
+
+
+def assert_only_local_and_mocked_worker_requests(request_urls):
+    for request_url in request_urls:
+        if request_url.startswith(("http://", "https://")):
+            parsed = urllib.parse.urlparse(request_url)
+            if parsed.hostname != "127.0.0.1":
+                assert request_url == PRODUCTION_AUDIT_URL, f"Unexpected external request: {request_url}"
 
 
 class QuietStaticHandler(SimpleHTTPRequestHandler):
@@ -149,7 +159,7 @@ def test_public_frontend_success_flow_in_real_chromium(
                 body=json.dumps(response_payload),
             )
 
-        page.route("**/api/audit", handle_audit)
+        page.route(PRODUCTION_AUDIT_URL, handle_audit)
 
         page.goto(local_frontend_url)
         assert page.title() == "LeadScan — Free Website Review"
@@ -171,7 +181,7 @@ def test_public_frontend_success_flow_in_real_chromium(
 
         # Request verification
         assert captured["method"] == "POST"
-        assert urllib.parse.urlparse(captured["url"]).path == "/api/audit"
+        assert captured["url"] == PRODUCTION_AUDIT_URL
         assert captured["post_data"] == {
             "url": "example.com",
             "contact_name": "Alice Owner",
@@ -211,10 +221,7 @@ def test_public_frontend_success_flow_in_real_chromium(
         assert page.evaluate("document.activeElement === document.getElementById('website-url')") is True
 
         # External network check
-        for req_url in captured_urls:
-            if req_url.startswith(("http://", "https://")):
-                parsed = urllib.parse.urlparse(req_url)
-                assert parsed.hostname == "127.0.0.1", f"Unexpected external request: {req_url}"
+        assert_only_local_and_mocked_worker_requests(captured_urls)
     finally:
         page.close()
 
@@ -235,12 +242,15 @@ def test_public_frontend_rate_limit_flow_in_real_chromium(
             }
             route.fulfill(
                 status=429,
-                headers={"Retry-After": "17"},
+                headers={
+                    "Access-Control-Expose-Headers": "Retry-After",
+                    "Retry-After": "17",
+                },
                 content_type="application/json",
                 body=json.dumps(response_payload),
             )
 
-        page.route("**/api/audit", handle_rate_limited)
+        page.route(PRODUCTION_AUDIT_URL, handle_rate_limited)
 
         page.goto(local_frontend_url)
         url_input = page.locator("#website-url")
@@ -272,10 +282,7 @@ def test_public_frontend_rate_limit_flow_in_real_chromium(
         expect(email_input).to_have_value("alice@example.com")
 
         # External network check
-        for req_url in captured_urls:
-            if req_url.startswith(("http://", "https://")):
-                parsed = urllib.parse.urlparse(req_url)
-                assert parsed.hostname == "127.0.0.1", f"Unexpected external request: {req_url}"
+        assert_only_local_and_mocked_worker_requests(captured_urls)
     finally:
         page.close()
 
@@ -300,7 +307,7 @@ def test_public_frontend_lead_capture_failure_recovers_in_real_chromium(
                 body=json.dumps(response_payload),
             )
 
-        page.route("**/api/audit", handle_capture_failed)
+        page.route(PRODUCTION_AUDIT_URL, handle_capture_failed)
 
         page.goto(local_frontend_url)
         url_input = page.locator("#website-url")
@@ -332,10 +339,7 @@ def test_public_frontend_lead_capture_failure_recovers_in_real_chromium(
         expect(page.locator("#result-score")).to_have_text("")
 
         # External network check
-        for req_url in captured_urls:
-            if req_url.startswith(("http://", "https://")):
-                parsed = urllib.parse.urlparse(req_url)
-                assert parsed.hostname == "127.0.0.1", f"Unexpected external request: {req_url}"
+        assert_only_local_and_mocked_worker_requests(captured_urls)
     finally:
         page.close()
 
