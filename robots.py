@@ -49,6 +49,7 @@ def may_fetch(
     timeout=8,
     public_only=False,
     resolver=None,
+    text_fetcher=None,
 ):
     """
     True when `robots.txt` allows this URL.
@@ -67,7 +68,14 @@ def may_fetch(
     if cache_key in _CACHE:
         parser = _CACHE[cache_key]
     else:
-        if public_only:
+        if public_only and text_fetcher is not None:
+            fetched = text_fetcher(robots_url, timeout)
+            if fetched is None:
+                parser = None
+            else:
+                final_url, text = fetched
+                parser = _parser_from_text(final_url, text)
+        elif public_only:
             parser = _read_public(robots_url, timeout, resolver=resolver)
         else:
             parser = _read(robots_url, timeout)
@@ -97,10 +105,17 @@ def _read(robots_url, timeout):
     if response.status_code != 200 or not response.text:
         return None
 
+    return _parser_from_text(robots_url, response.text)
+
+
+def _parser_from_text(robots_url, text):
+    """Build the shared robots parser from an already-fetched text body."""
+    if not text:
+        return None
     parser = urllib.robotparser.RobotFileParser()
     parser.set_url(robots_url)
     try:
-        parser.parse(response.text.splitlines())
+        parser.parse(text.splitlines())
     except Exception:
         return None
     return parser
@@ -194,12 +209,6 @@ def _read_public(
             if not text:
                 return None
 
-            parser = urllib.robotparser.RobotFileParser()
-            parser.set_url(current_url)
-            try:
-                parser.parse(text.splitlines())
-            except Exception:
-                return None
-            return parser
+            return _parser_from_text(current_url, text)
         finally:
             response.close()

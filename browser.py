@@ -166,6 +166,7 @@ class Browser:
                 self.browser = self._playwright.chromium.launch(headless=True)
             else:
                 self.browser = self._playwright.chromium.connect_over_cdp(remote_url)
+            self._remote_browser = remote_url is not None
             # Always create LeadScan's own context. In public mode this is what
             # preserves service-worker blocking instead of inheriting an
             # unguarded remote default context.
@@ -322,6 +323,51 @@ class Browser:
     # -----------------------------------------------------------------
     # Page rendering
     # -----------------------------------------------------------------
+    def _read_remote_robots_text(self, robots_url, timeout, deadline=None):
+        """Fetch a bounded robots body through the guarded remote browser."""
+        page = self._new_page()
+        try:
+            if deadline:
+                deadline.check()
+            timeout_ms = max(1, int(float(timeout) * 1000))
+            if deadline:
+                timeout_ms = deadline.cap_milliseconds(timeout_ms)
+            response = page.goto(
+                robots_url,
+                timeout=timeout_ms,
+                wait_until="domcontentloaded",
+            )
+            if deadline:
+                deadline.check()
+            if response is None or response.status != 200:
+                return None
+
+            headers = response.all_headers()
+            content_length = headers.get("content-length")
+            if content_length is not None:
+                try:
+                    if int(str(content_length).strip()) > robots.MAX_PUBLIC_ROBOTS_BYTES:
+                        return None
+                except (TypeError, ValueError):
+                    pass
+
+            body = response.body()
+            if not isinstance(body, (bytes, bytearray)):
+                return None
+            if len(body) > robots.MAX_PUBLIC_ROBOTS_BYTES:
+                return None
+            text = bytes(body).decode("utf-8", errors="replace")
+            return page.url, text
+        except deadlines.AuditDeadlineExceeded:
+            raise
+        except Exception:
+            return None
+        finally:
+            try:
+                page.close()
+            except Exception:
+                pass
+
     def render(self, url, deadline=None):
         """
         Load a page fully. Give back (html, final_url, load_seconds, error).
@@ -340,16 +386,31 @@ class Browser:
 
         if self.respect_robots:
             robots_timeout = budget.cap_seconds(8) if budget else 8
+            remote_public_robots = (
+                getattr(self, "_remote_browser", False)
+                and self.enforce_public_browser_requests
+            )
+            robots_kwargs = {
+                "timeout": robots_timeout,
+                "public_only": self.enforce_public_browser_requests,
+                "resolver": (
+                    self.public_resolver
+                    if self.enforce_public_browser_requests
+                    else None
+                ),
+            }
+            if remote_public_robots:
+                robots_kwargs["text_fetcher"] = (
+                    lambda robots_url, timeout: self._read_remote_robots_text(
+                        robots_url,
+                        timeout,
+                        deadline=budget,
+                    )
+                )
             try:
                 allowed = robots.may_fetch(
                     url,
-                    timeout=robots_timeout,
-                    public_only=self.enforce_public_browser_requests,
-                    resolver=(
-                        self.public_resolver
-                        if self.enforce_public_browser_requests
-                        else None
-                    ),
+                    **robots_kwargs,
                 )
             except url_safety.UnsafeURL:
                 return None, url, None, "unsafe URL blocked"
