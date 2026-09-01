@@ -92,6 +92,11 @@ USER_AGENT = os.getenv(
     "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
 )
 
+# Optional Browserless shared-fleet connection. Both values must be configured
+# together; the token is appended only after browser.py validates the endpoint.
+BROWSERLESS_ENDPOINT = os.getenv("BROWSERLESS_ENDPOINT", "").strip()
+BROWSERLESS_TOKEN = os.getenv("BROWSERLESS_TOKEN", "").strip()
+
 
 # ---------------------------------------------------------------------------
 # Cache

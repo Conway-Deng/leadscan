@@ -34,6 +34,58 @@ _OG_DESCRIPTION = re.compile(
 )
 _FOLLOWERS_IN_TEXT = re.compile(r"([\d.,]+\s*[KMkm]?)\s*Followers", re.I)
 
+_BROWSERLESS_HOSTS = frozenset({
+    "production-sfo.browserless.io",
+    "production-lon.browserless.io",
+    "production-ams.browserless.io",
+})
+_BROWSERLESS_SESSION_TIMEOUT_MS = 120_000
+
+
+class BrowserlessConfigurationError(RuntimeError):
+    """Raised when optional Browserless settings are incomplete or unsafe."""
+
+
+class BrowserlessConnectionError(RuntimeError):
+    """Sanitized remote-browser startup failure that never includes the token."""
+
+
+def _browserless_cdp_url(endpoint, token):
+    """Return a restricted Browserless WebSocket URL, or None for local mode."""
+    endpoint = (endpoint or "").strip()
+    token = (token or "").strip()
+    if not endpoint and not token:
+        return None
+    if not endpoint or not token:
+        raise BrowserlessConfigurationError(
+            "Browserless endpoint and token must be configured together"
+        )
+
+    try:
+        parsed = urllib.parse.urlsplit(endpoint)
+        port = parsed.port
+    except ValueError:
+        raise BrowserlessConfigurationError("Invalid Browserless endpoint") from None
+
+    if (
+        parsed.scheme.lower() not in {"https", "wss"}
+        or (parsed.hostname or "").lower() not in _BROWSERLESS_HOSTS
+        or parsed.username is not None
+        or parsed.password is not None
+        or port is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise BrowserlessConfigurationError("Invalid Browserless endpoint")
+
+    host = parsed.hostname.lower()
+    query = urllib.parse.urlencode({
+        "token": token,
+        "timeout": str(_BROWSERLESS_SESSION_TIMEOUT_MS),
+    })
+    return urllib.parse.urlunsplit(("wss", host, "", query, ""))
+
 
 def _host_of(url):
     """The host part of a URL, used to keep the polite delay per server."""
@@ -96,8 +148,11 @@ class Browser:
         self.deadline = deadline
 
     def __enter__(self):
+        remote_url = _browserless_cdp_url(
+            config.BROWSERLESS_ENDPOINT,
+            config.BROWSERLESS_TOKEN,
+        )
         self._playwright = sync_playwright().start()
-        self.browser = self._playwright.chromium.launch(headless=True)
         context_kwargs = {
             "user_agent": config.USER_AGENT,
             "viewport": {"width": 1366, "height": 900},
@@ -105,9 +160,25 @@ class Browser:
         }
         if self.enforce_public_browser_requests:
             context_kwargs["service_workers"] = "block"
-        self.context = self.browser.new_context(**context_kwargs)
-        if self.enforce_public_browser_requests:
-            self._install_public_websocket_guard()
+
+        try:
+            if remote_url is None:
+                self.browser = self._playwright.chromium.launch(headless=True)
+            else:
+                self.browser = self._playwright.chromium.connect_over_cdp(remote_url)
+            # Always create LeadScan's own context. In public mode this is what
+            # preserves service-worker blocking instead of inheriting an
+            # unguarded remote default context.
+            self.context = self.browser.new_context(**context_kwargs)
+            if self.enforce_public_browser_requests:
+                self._install_public_websocket_guard()
+        except Exception:
+            self._close_resources()
+            if remote_url is not None:
+                raise BrowserlessConnectionError(
+                    "Remote browser connection failed"
+                ) from None
+            raise
         return self
 
     def _block_public_websocket(self, websocket):
@@ -204,6 +275,10 @@ class Browser:
         return session
 
     def __exit__(self, *exc):
+        self._close_resources()
+        return False
+
+    def _close_resources(self):
         # Close each resource on its own. A failure in one must not leak the
         # others, which was the fault in the earlier one-line version.
         for close in (
@@ -219,7 +294,6 @@ class Browser:
             self._playwright.stop()
         except Exception:
             pass
-        return False
 
     def _wait_politely(self, url="", deadline=None):
         """
