@@ -9,106 +9,179 @@
   <script src="app.js" defer></script>
 </head>
 <body>
-  <main class="container">
-    <header class="header">
-      <h1 class="brand">LeadScan</h1>
-      <p class="tagline">See what may be getting in the way of website enquiries.</p>
-    </header>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
 
-    <section class="description-section">
-      <p class="description">
-        Enter a business website. LeadScan checks a small set of observable website signals and returns a short review. It does not inspect advertising accounts, search rankings, analytics, or private business data.
-      </p>
+  <header class="site-header">
+    <nav class="site-nav container" aria-label="Primary navigation">
+      <a class="wordmark" href="#main-content" aria-label="LeadScan home">
+        <span class="wordmark-mark" aria-hidden="true"><span></span></span>
+        <span>LeadScan</span>
+      </a>
+      <div class="nav-links">
+        <a class="nav-link nav-link-secondary" href="#how-it-works">How it works</a>
+        <a class="nav-link nav-link-secondary" href="#what-we-check">What we check</a>
+        <a class="button button-small" href="#review">Get free review</a>
+      </div>
+    </nav>
+  </header>
+
+  <main id="main-content">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="container hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow">Free website review</p>
+          <h1 id="hero-title">See what may be getting in the way of website enquiries.</h1>
+          <p class="hero-intro">
+            LeadScan reviews observable signals on your public website and turns them into a short, plain-English review — without access to your analytics, advertising accounts, or private business data.
+          </p>
+          <div class="hero-actions">
+            <a class="button" href="#review">Review my website</a>
+            <a class="text-link" href="#how-it-works">See how it works <span aria-hidden="true">→</span></a>
+          </div>
+          <ul class="trust-list" aria-label="Review details">
+            <li><span aria-hidden="true">✓</span> Public website signals only</li>
+            <li><span aria-hidden="true">✓</span> No analytics or ad-account login required</li>
+            <li><span aria-hidden="true">✓</span> Usually takes about 1–2 minutes</li>
+          </ul>
+        </div>
+
+        <aside class="sample-card" aria-label="Illustrative sample website review">
+          <div class="sample-card-header">
+            <div>
+              <p class="sample-kicker">Website review</p>
+              <h2>Sample preview</h2>
+            </div>
+            <span class="sample-badge">Illustrative</span>
+          </div>
+          <div class="sample-score">
+            <span class="sample-score-number">72</span>
+            <span class="sample-score-total">/ 100</span>
+            <span class="sample-score-label">Example score</span>
+          </div>
+          <div class="sample-findings">
+            <div class="sample-finding sample-finding-positive">
+              <span class="finding-icon" aria-hidden="true">✓</span>
+              <span>Contact path detected</span>
+            </div>
+            <div class="sample-finding sample-finding-positive">
+              <span class="finding-icon" aria-hidden="true">✓</span>
+              <span>Mobile setup detected</span>
+            </div>
+            <div class="sample-finding sample-finding-review">
+              <span class="finding-icon" aria-hidden="true">!</span>
+              <span>2 areas worth reviewing</span>
+            </div>
+          </div>
+          <p class="sample-footer">Plain-English findings and practical next steps.</p>
+        </aside>
+      </div>
     </section>
 
-    <section class="audit-card">
-      <form id="audit-form" class="audit-form">
-        <div class="form-field">
-          <label for="website-url" class="form-label">Website address</label>
-          <input
-            id="website-url"
-            class="form-input"
-            type="text"
-            inputmode="url"
-            autocomplete="url"
-            maxlength="2048"
-            placeholder="example.com"
-            required
-          >
+    <section id="how-it-works" class="section" aria-labelledby="how-title">
+      <div class="container">
+        <div class="section-heading">
+          <p class="eyebrow">How it works</p>
+          <h2 id="how-title">A useful website review in three steps</h2>
+          <p>Share your public website and LeadScan will return a focused review here on the page.</p>
+        </div>
+        <ol class="steps-grid">
+          <li class="step-card">
+            <span class="step-number">01</span>
+            <h3>Enter your website</h3>
+            <p>Add your business website, name and work email.</p>
+          </li>
+          <li class="step-card">
+            <span class="step-number">02</span>
+            <h3>LeadScan reviews public signals</h3>
+            <p>The review looks at observable website signals without accessing private accounts.</p>
+          </li>
+          <li class="step-card">
+            <span class="step-number">03</span>
+            <h3>Get a plain-English report</h3>
+            <p>See what was found, what is already working, and practical areas worth reviewing.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="what-we-check" class="section section-soft" aria-labelledby="checks-title">
+      <div class="container">
+        <div class="section-heading">
+          <p class="eyebrow">Focused and observable</p>
+          <h2 id="checks-title">What LeadScan looks at</h2>
+          <p>A focused review of observable website signals that can affect how easily a visitor can become an enquiry.</p>
+        </div>
+        <div class="feature-grid">
+          <article class="feature-card"><span class="feature-icon" aria-hidden="true">01</span><h3>Contact paths</h3><p>Forms, booking links, WhatsApp and click-to-call options.</p></article>
+          <article class="feature-card"><span class="feature-icon" aria-hidden="true">02</span><h3>Mobile setup</h3><p>Whether the page is configured for phone screens.</p></article>
+          <article class="feature-card"><span class="feature-icon" aria-hidden="true">03</span><h3>Basic trust</h3><p>HTTPS and other directly observable website signals.</p></article>
+          <article class="feature-card"><span class="feature-icon" aria-hidden="true">04</span><h3>Loading performance</h3><p>How long the reviewed page takes to appear during the scan.</p></article>
+          <article class="feature-card"><span class="feature-icon" aria-hidden="true">05</span><h3>Marketing technology signals</h3><p>Observable advertising and analytics tags installed on the public page.</p></article>
+          <article class="feature-card"><span class="feature-icon" aria-hidden="true">06</span><h3>Enquiry friction</h3><p>Obvious obstacles between a visitor and a clear next contact action.</p></article>
+        </div>
+        <p class="scope-note"><span class="scope-note-icon" aria-hidden="true">i</span><span>LeadScan does not inspect search rankings, private analytics, advertising-account performance, customer records or private business systems.</span></p>
+      </div>
+    </section>
+
+    <section id="review" class="review-section" aria-labelledby="review-title">
+      <div class="container review-container">
+        <div class="section-heading review-heading">
+          <p class="eyebrow">Start your review</p>
+          <h2 id="review-title">Get your free website review</h2>
+          <p>Enter your website and work email. LeadScan will review the public site and return the report here.</p>
         </div>
 
-        <div class="contact-grid">
-          <div class="form-field">
-            <label for="contact-name" class="form-label">Your name (optional)</label>
-            <input
-              id="contact-name"
-              class="form-input"
-              type="text"
-              autocomplete="name"
-              maxlength="120"
-              placeholder="Jane Doe"
-            >
-          </div>
-          <div class="form-field">
-            <label for="contact-email" class="form-label">Work email</label>
-            <input
-              id="contact-email"
-              class="form-input"
-              type="email"
-              inputmode="email"
-              autocomplete="email"
-              maxlength="254"
-              placeholder="jane@example.com"
-              required
-              aria-describedby="contact-privacy"
-            >
-          </div>
+        <div class="audit-card">
+          <form id="audit-form" class="audit-form">
+            <div class="form-field form-field-primary">
+              <label for="website-url" class="form-label">Website address</label>
+              <input id="website-url" class="form-input" type="text" inputmode="url" autocomplete="url" maxlength="2048" placeholder="example.com" required>
+            </div>
+            <div class="contact-grid">
+              <div class="form-field">
+                <label for="contact-name" class="form-label">Your name (optional)</label>
+                <input id="contact-name" class="form-input" type="text" autocomplete="name" maxlength="120" placeholder="Jane Doe">
+              </div>
+              <div class="form-field">
+                <label for="contact-email" class="form-label">Work email</label>
+                <input id="contact-email" class="form-input" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="jane@example.com" required aria-describedby="contact-privacy">
+              </div>
+            </div>
+            <p id="contact-privacy" class="contact-privacy">We’ll store your name and email with this review so the LeadScan team can follow up about it. Please do not enter sensitive information.</p>
+            <div class="form-actions">
+              <button id="audit-submit" class="button submit-button" type="submit">Get my free review</button>
+              <span class="private-note"><span aria-hidden="true">✓</span> No private account access required.</span>
+            </div>
+          </form>
+
+          <div id="audit-status" class="status-region" role="status" aria-live="polite"></div>
+
+          <section id="audit-result" class="result-section" aria-labelledby="result-title" hidden>
+            <div class="result-heading"><p class="eyebrow">Your website review</p><h2 id="result-title">Your review is ready</h2></div>
+            <div class="result-summary">
+              <div class="summary-card score-card"><span class="summary-label">Score</span><span class="score-line"><span id="result-score" class="summary-value"></span><span class="score-total">/ 100</span></span></div>
+              <div class="summary-card website-card"><span class="summary-label">Reviewed website</span><p id="result-url" class="summary-url"></p></div>
+            </div>
+            <p class="result-context">This score reflects the public website signals LeadScan checks. It is not a complete SEO, advertising or analytics audit.</p>
+            <div class="report-section">
+              <h3>Full website review</h3>
+              <div class="report-shell">
+                <div class="report-toolbar"><span class="report-toolbar-mark" aria-hidden="true"></span><span>Report preview</span></div>
+                <iframe id="report-preview" class="report-frame" sandbox referrerpolicy="no-referrer" title="Full LeadScan website review report"></iframe>
+              </div>
+            </div>
+            <div class="reset-container"><button id="audit-reset" class="button button-secondary" type="button">Review another website</button></div>
+          </section>
         </div>
-
-        <p id="contact-privacy" class="contact-privacy">
-          We’ll store your name and email with this website review so the LeadScan team can follow up about the review. Do not enter sensitive information.
-        </p>
-
-        <div class="form-actions">
-          <button id="audit-submit" class="submit-btn" type="submit">Review website</button>
-        </div>
-
-        <p class="expectation-text">The review can take up to about 1–2 minutes.</p>
-      </form>
-
-      <div id="audit-status" class="status-region" role="status" aria-live="polite"></div>
-
-      <section id="audit-result" class="result-section" hidden>
-        <div class="result-summary">
-          <div class="summary-card">
-            <span class="summary-label">Score</span>
-            <span id="result-score" class="summary-value"></span>
-          </div>
-          <div class="summary-card">
-            <span class="summary-label">Tier</span>
-            <span id="result-tier" class="summary-value"></span>
-          </div>
-          <div class="summary-card summary-card-full">
-            <span class="summary-label">Suggested opening line</span>
-            <p id="result-hook" class="summary-text"></p>
-          </div>
-        </div>
-
-        <div class="preview-container">
-          <iframe
-            id="report-preview"
-            class="report-frame"
-            sandbox
-            referrerpolicy="no-referrer"
-            title="Website review report preview"
-          ></iframe>
-        </div>
-
-        <div class="reset-container">
-          <button id="audit-reset" class="reset-btn" type="button">Review another website</button>
-        </div>
-      </section>
+      </div>
     </section>
   </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <div><p class="footer-brand">LeadScan</p><p>Focused website reviews based on observable public signals.</p></div>
+      <p class="footer-note">LeadScan reviews only a limited set of public website signals and is not a replacement for a full technical, SEO, analytics or advertising audit.</p>
+    </div>
+  </footer>
 </body>
 </html>

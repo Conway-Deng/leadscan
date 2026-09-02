@@ -9,8 +9,7 @@
   const auditStatus = document.getElementById("audit-status");
   const auditResult = document.getElementById("audit-result");
   const resultScore = document.getElementById("result-score");
-  const resultTier = document.getElementById("result-tier");
-  const resultHook = document.getElementById("result-hook");
+  const resultUrl = document.getElementById("result-url");
   const reportPreview = document.getElementById("report-preview");
   const auditReset = document.getElementById("audit-reset");
 
@@ -75,10 +74,17 @@
 
   function clearResults() {
     resultScore.textContent = "";
-    resultTier.textContent = "";
-    resultHook.textContent = "";
+    resultUrl.textContent = "";
     reportPreview.srcdoc = "";
     auditResult.hidden = true;
+  }
+
+  function scrollToResult() {
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    auditResult.scrollIntoView({
+      behavior: reducedMotion ? "auto" : "smooth",
+      block: "start"
+    });
   }
 
   function setLoading(isLoading) {
@@ -86,12 +92,13 @@
     contactNameInput.disabled = isLoading;
     contactEmailInput.disabled = isLoading;
     auditSubmit.disabled = isLoading;
+    auditStatus.classList.toggle("is-loading", isLoading);
     if (isLoading) {
       auditSubmit.textContent = "Reviewing…";
-      setStatus("Reviewing the website. This can take a little while.");
+      setStatus("Reviewing the public website. This can take about 1–2 minutes.");
       clearResults();
     } else {
-      auditSubmit.textContent = "Review website";
+      auditSubmit.textContent = "Get my free review";
     }
   }
 
@@ -103,7 +110,7 @@
     contactNameInput.disabled = false;
     contactEmailInput.disabled = false;
     auditSubmit.disabled = false;
-    auditSubmit.textContent = "Review website";
+    auditSubmit.textContent = "Get my free review";
     websiteInput.value = "";
     contactNameInput.value = "";
     contactEmailInput.value = "";
@@ -162,14 +169,15 @@
       ) {
         isCompletedSuccess = true;
         auditForm.hidden = true;
+        auditStatus.classList.remove("is-loading");
         setStatus("Review complete.");
 
         resultScore.textContent = data.result.score != null ? String(data.result.score) : "—";
-        resultTier.textContent = data.result.tier ? data.result.tier : "Not ranked";
-        resultHook.textContent = data.result.hook ? data.result.hook : "No opening line generated.";
+        resultUrl.textContent = data.result.final_url || data.result.url || submittedUrl;
 
         reportPreview.srcdoc = data.result.report_html;
         auditResult.hidden = false;
+        scrollToResult();
       } else {
         const code = data && typeof data.code === "string" ? data.code : "";
         let errorMsg = ERROR_MESSAGES[code] || ERROR_MESSAGES.generic;

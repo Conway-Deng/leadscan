@@ -39,6 +39,27 @@ def test_site_files_exist():
     assert NETLIFY_CONFIG.is_file()
 
 
+def test_landing_page_has_customer_facing_structure_and_single_h1():
+    tags = parse_index_tags()
+    content = INDEX_HTML.read_text(encoding="utf-8")
+    tags_by_id = {attrs["id"]: (tag, attrs) for tag, attrs in tags if "id" in attrs}
+
+    assert [tag for tag, _attrs in tags].count("h1") == 1
+    assert tags_by_id["main-content"][0] == "main"
+    assert tags_by_id["how-it-works"][0] == "section"
+    assert tags_by_id["what-we-check"][0] == "section"
+    assert tags_by_id["review"][0] == "section"
+    assert "See what may be getting in the way of website enquiries." in content
+    assert "A useful website review in three steps" in content
+    assert "What LeadScan looks at" in content
+    assert "Get your free website review" in content
+    assert "Sample preview" in content
+    assert "Illustrative" in content
+    assert 'class="skip-link"' in content
+    for forbidden_ui in ('id="login"', 'href="/login"', 'id="signup"', 'href="/signup"'):
+        assert forbidden_ui not in content.lower()
+
+
 def test_frontend_declares_manual_worker_origin_configuration():
     tags = parse_index_tags()
     content = INDEX_HTML.read_text(encoding="utf-8")
@@ -162,8 +183,10 @@ def test_result_section_and_required_ids():
 
     # Result fields
     assert "result-score" in tags_by_id
-    assert "result-tier" in tags_by_id
-    assert "result-hook" in tags_by_id
+    assert "result-url" in tags_by_id
+    assert "report-preview" in tags_by_id
+    assert "result-tier" not in tags_by_id
+    assert "result-hook" not in tags_by_id
 
 
 def test_report_iframe_sandbox_and_security_attributes():
@@ -295,6 +318,10 @@ def test_js_sends_contact_capture_contract_without_browser_persistence():
     assert '"/api/audit"' in js_content or "'/api/audit'" in js_content
     assert '"POST"' in js_content or "'POST'" in js_content
     assert "application/json" in js_content
+    assert re.search(
+        r"JSON\.stringify\(\{\s*url:\s*submittedUrl,\s*contact_name:\s*contactName,\s*email:\s*contactEmail\s*\}\)",
+        js_content,
+    )
 
     for forbidden in ("localStorage", "sessionStorage", "indexedDB", "document.cookie", "console.log"):
         assert forbidden not in js_content
@@ -317,7 +344,21 @@ def test_js_loading_and_reset_semantics():
     assert 'contactNameInput.value = ""' in js_content or "contactNameInput.value = ''" in js_content
     assert 'contactEmailInput.value = ""' in js_content or "contactEmailInput.value = ''" in js_content
     assert "Reviewing…" in js_content or "Reviewing..." in js_content
+    assert "Reviewing the public website. This can take about 1–2 minutes." in js_content
+    assert "Get my free review" in js_content
     assert 'reportPreview.srcdoc = ""' in js_content or "reportPreview.srcdoc = ''" in js_content
+
+
+def test_js_uses_customer_facing_result_fields_safely():
+    js_content = APP_JS.read_text(encoding="utf-8")
+
+    assert 'document.getElementById("result-url")' in js_content
+    assert "resultUrl.textContent" in js_content
+    assert "data.result.final_url || data.result.url || submittedUrl" in js_content
+    assert "resultTier" not in js_content
+    assert "resultHook" not in js_content
+    assert "scrollIntoView" in js_content
+    assert "prefers-reduced-motion: reduce" in js_content
 
 
 def test_css_responsive_and_accessibility():
@@ -329,6 +370,11 @@ def test_css_responsive_and_accessibility():
     assert "max-width" in css_content
     assert "prefers-reduced-motion" in css_content
     assert "[hidden]" in css_content
+    assert "--brand-900: #134e4a" in css_content
+    assert "--brand-700: #0f766e" in css_content
+    assert "--brand-50: #f0fdfa" in css_content
+    assert ":focus-visible" in css_content
+    assert ".status-region.is-loading::before" in css_content
 
 
 def test_no_build_tool_or_package_files_created():

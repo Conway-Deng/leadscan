@@ -194,8 +194,9 @@ def test_public_frontend_success_flow_in_real_chromium(
         expect(page.locator("#audit-form")).to_be_hidden()
         expect(page.locator("#audit-result")).to_be_visible()
         expect(page.locator("#result-score")).to_have_text("87")
-        expect(page.locator("#result-tier")).to_have_text("strong")
-        expect(page.locator("#result-hook")).to_have_text("A concrete browser-test opening line.")
+        expect(page.locator("#result-url")).to_have_text("https://example.com/home")
+        assert page.locator("#result-tier").count() == 0
+        assert page.locator("#result-hook").count() == 0
 
         # Report srcdoc + iframe render verification
         iframe_srcdoc = page.eval_on_selector("#report-preview", "el => el.srcdoc")
@@ -215,9 +216,10 @@ def test_public_frontend_success_flow_in_real_chromium(
         expect(email_input).to_have_value("")
         expect(email_input).to_be_enabled()
         expect(submit_btn).to_be_enabled()
-        expect(submit_btn).to_have_text("Review website")
+        expect(submit_btn).to_have_text("Get my free review")
         expect(status_el).to_have_text("")
         assert page.eval_on_selector("#report-preview", "el => el.srcdoc") == ""
+        expect(page.locator("#result-url")).to_have_text("")
         assert page.evaluate("document.activeElement === document.getElementById('website-url')") is True
 
         # External network check
@@ -276,7 +278,7 @@ def test_public_frontend_rate_limit_flow_in_real_chromium(
         expect(name_input).to_be_enabled()
         expect(email_input).to_be_enabled()
         expect(submit_btn).to_be_enabled()
-        expect(submit_btn).to_have_text("Review website")
+        expect(submit_btn).to_have_text("Get my free review")
         expect(url_input).to_have_value("example.com")
         expect(name_input).to_have_value("Alice Owner")
         expect(email_input).to_have_value("alice@example.com")
@@ -332,7 +334,7 @@ def test_public_frontend_lead_capture_failure_recovers_in_real_chromium(
         expect(name_input).to_be_enabled()
         expect(email_input).to_be_enabled()
         expect(submit_btn).to_be_enabled()
-        expect(submit_btn).to_have_text("Review website")
+        expect(submit_btn).to_have_text("Get my free review")
         expect(url_input).to_have_value("example.com")
         expect(name_input).to_have_value("Alice Owner")
         expect(email_input).to_have_value("alice@example.com")
@@ -427,8 +429,9 @@ def test_public_frontend_configured_worker_origin_in_real_chromium(
         expect(page.locator("#audit-form")).to_be_hidden()
         expect(page.locator("#audit-result")).to_be_visible()
         expect(page.locator("#result-score")).to_have_text("87")
-        expect(page.locator("#result-tier")).to_have_text("strong")
-        expect(page.locator("#result-hook")).to_have_text("A concrete cross-origin opening line.")
+        expect(page.locator("#result-url")).to_have_text("https://example.com/home")
+        assert page.locator("#result-tier").count() == 0
+        assert page.locator("#result-hook").count() == 0
 
         # Report srcdoc + iframe render verification
         iframe_srcdoc = page.eval_on_selector("#report-preview", "el => el.srcdoc")
