@@ -198,7 +198,16 @@ def test_report_iframe_sandbox_and_security_attributes():
     assert frame_tag == "iframe"
     assert "sandbox" in frame_attrs
     sandbox_val = frame_attrs.get("sandbox") or ""
-    for forbidden_perm in ("allow-scripts", "allow-same-origin", "allow-forms", "allow-top-navigation"):
+    assert sandbox_val.split() == ["allow-same-origin"]
+    for forbidden_perm in (
+        "allow-scripts",
+        "allow-forms",
+        "allow-popups",
+        "allow-popups-to-escape-sandbox",
+        "allow-top-navigation",
+        "allow-top-navigation-by-user-activation",
+        "allow-downloads",
+    ):
         assert forbidden_perm not in sandbox_val
 
     assert frame_attrs.get("referrerpolicy") == "no-referrer"

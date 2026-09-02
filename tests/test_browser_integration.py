@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import sys
 import threading
 import urllib.parse
@@ -15,12 +16,14 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tests", "fixtures"))
 
+import audit_report  # noqa: E402
 import config  # noqa: E402
 import robots  # noqa: E402
 import runner  # noqa: E402
 import serve  # noqa: E402
 
 SITE_DIR = os.path.join(ROOT, "site")
+NETLIFY_CONFIG = os.path.join(ROOT, "netlify.toml")
 PRODUCTION_WORKER_ORIGIN = "https://leadscan-9fsy.onrender.com"
 PRODUCTION_AUDIT_URL = f"{PRODUCTION_WORKER_ORIGIN}/api/audit"
 
@@ -36,6 +39,24 @@ def assert_only_local_and_mocked_worker_requests(request_urls):
 class QuietStaticHandler(SimpleHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
+
+
+def production_csp():
+    with open(NETLIFY_CONFIG, encoding="utf-8") as config_file:
+        match = re.search(
+            r'Content-Security-Policy\s*=\s*"([^"]+)"',
+            config_file.read(),
+        )
+    assert match is not None
+    return match.group(1)
+
+
+class ProductionHeadersStaticHandler(QuietStaticHandler):
+    def end_headers(self):
+        self.send_header("Content-Security-Policy", production_csp())
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        super().end_headers()
 
 
 @pytest.fixture
@@ -56,6 +77,22 @@ def local_fixture_url():
 @pytest.fixture
 def local_frontend_url():
     handler = partial(QuietStaticHandler, directory=SITE_DIR)
+    server = HTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    try:
+        yield f"http://{host}:{port}/"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+
+@pytest.fixture
+def production_headers_frontend_url():
+    handler = partial(ProductionHeadersStaticHandler, directory=SITE_DIR)
     server = HTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -224,6 +261,126 @@ def test_public_frontend_success_flow_in_real_chromium(
 
         # External network check
         assert_only_local_and_mocked_worker_requests(captured_urls)
+    finally:
+        page.close()
+
+
+def test_report_renders_with_production_headers_and_remains_isolated(
+    production_headers_frontend_url,
+    frontend_chromium,
+):
+    page = frontend_chromium.new_page()
+    request_urls = []
+    page.on("request", lambda request: request_urls.append(request.url))
+    try:
+        report_html = audit_report.build(
+            {
+                "name": "Example Dental Studio",
+                "website": "https://example.com",
+                "review_count": 42,
+            },
+            {
+                "capture_methods": [],
+                "is_parked": False,
+                "has_mobile_viewport": False,
+                "is_slow": True,
+                "load_seconds": 4.8,
+                "is_https": True,
+                "ad_tags": ["Meta Pixel"],
+                "pages_checked": ["/services", "/contact"],
+            },
+            brand_info={
+                "name": "LeadScan",
+                "tagline": "Public website review",
+                "contact": "hello@example.invalid",
+                "colour": "#2563eb",
+                "cta": "Let us walk through these findings together.",
+            },
+            stamp="2026-09-02",
+        )
+        report_html = report_html.replace(
+            "</body>",
+            '<script>document.body.dataset.scriptRan="yes";'
+            'window.parent.document.body.dataset.reportScriptRan="yes";</script>'
+            "</body>",
+        )
+
+        page.route(
+            PRODUCTION_AUDIT_URL,
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({
+                    "ok": True,
+                    "code": "ok",
+                    "result": {
+                        "url": "https://example.com",
+                        "final_url": "https://example.com/home",
+                        "score": 87,
+                        "tier": "strong",
+                        "hook": "Opening line",
+                        "report_html": report_html,
+                    },
+                }),
+            ),
+        )
+
+        response = page.goto(production_headers_frontend_url)
+        assert response.headers["content-security-policy"] == production_csp()
+        assert response.headers["x-frame-options"] == "DENY"
+        page.eval_on_selector(
+            "#report-preview",
+            """element => {
+                element.dataset.loadCount = "0";
+                element.addEventListener("load", () => {
+                    element.dataset.loadCount = String(Number(element.dataset.loadCount) + 1);
+                });
+            }""",
+        )
+
+        page.locator("#website-url").fill("example.com")
+        page.locator("#contact-name").fill("Alice Owner")
+        page.locator("#contact-email").fill("alice@example.com")
+        page.locator("#audit-submit").click()
+
+        expect(page.locator("#audit-result")).to_be_visible()
+        expect(page.locator("#result-score")).to_have_text("87")
+        expect(page.locator("#result-url")).to_have_text("https://example.com/home")
+
+        iframe = page.locator("#report-preview")
+        sandbox_tokens = (iframe.get_attribute("sandbox") or "").split()
+        assert sandbox_tokens == ["allow-same-origin"]
+        assert "allow-scripts" not in sandbox_tokens
+        assert iframe.get_attribute("referrerpolicy") == "no-referrer"
+        iframe_srcdoc = iframe.evaluate("element => element.srcdoc")
+        assert len(iframe_srcdoc) > 5000
+        assert "Website review" in iframe_srcdoc
+        assert "What this review did not check" in iframe_srcdoc
+        expect(iframe).to_have_attribute("data-load-count", re.compile(r"[1-9]\d*"))
+
+        frame = page.frame_locator("#report-preview")
+        sheet = frame.locator(".sheet")
+        expect(sheet).to_be_visible()
+        sheet_box = sheet.bounding_box()
+        assert sheet_box is not None
+        assert sheet_box["width"] > 0
+        assert sheet_box["height"] > 0
+
+        heading = frame.get_by_role("heading", name="Website review", exact=True)
+        expect(heading).to_be_visible()
+        heading_box = heading.bounding_box()
+        assert heading_box is not None
+        assert heading_box["width"] > 0
+        assert heading_box["height"] > 0
+        expect(frame.locator("body")).to_contain_text("Example Dental Studio")
+        expect(frame.locator("body")).to_contain_text("What this review did not check")
+        assert frame.locator("body").get_attribute("data-script-ran") is None
+        assert page.locator("body").get_attribute("data-report-script-ran") is None
+        assert_only_local_and_mocked_worker_requests(request_urls)
+
+        page.locator("#audit-reset").click()
+        expect(page.locator("#audit-result")).to_be_hidden()
+        assert iframe.evaluate("element => element.srcdoc") == ""
     finally:
         page.close()
 
