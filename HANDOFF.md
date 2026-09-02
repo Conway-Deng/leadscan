@@ -359,33 +359,27 @@ lead, and you can say exactly what you saw.
 
 ---
 
-## Hosted audit widget — current state (2026-08-31)
+## Hosted audit widget — current state (2026-09-02)
 
 This work closes the major product gap identified in v4: allowing a prospective client to visit the agency's website, enter their URL, receive an instant branded review, and be captured as an inbound lead with their contact details stored privately before the report is returned.
 
-### Completed in code (deployment-ready)
+### Live production state
 
-* **Static public frontend** (`site/`): Pure HTML/CSS/JS without build tools or external script dependencies. Collects website URL, optional contact name, and required work email with clear privacy notice.
+* **Hosted widget is live**: the public frontend is <https://enchanting-alpaca-de0ed3.netlify.app> and is accessible without Netlify authentication.
+* **Render worker is live**: <https://leadscan-9fsy.onrender.com> serves the independent audit API.
+* **Redesigned public frontend deployed**: the customer-facing landing page from commit `57deef5277a6a4bda64f7c11545f7555aef6206f` is live. It presents the score, reviewed website, and full report rather than the internal Tier/Suggested opening line summary.
+* **Static public frontend** (`site/`): Pure HTML/CSS/JS without build tools or external script dependencies. Collects website URL, optional contact name, and required work email with a clear privacy notice.
 * **Exact three-field API contract**: `POST /api/audit` strictly requires `url`, `contact_name`, and `email`. Legacy URL-only bypass is completely removed.
-* **Fail-closed lead capture**: Lead details are validated and saved to private SQLite storage before returning the audit report. Storage failures return 500 (`lead_capture_failed`) without leaking report HTML.
-* **Private SQLite lead store** (`lead_capture.py`): SQLite schema with busy timeout and fail-closed permission enforcement. No public read API.
+* **Production path verified**: Netlify -> Render -> Chromium -> public website audit -> Postgres lead persistence -> customer report has succeeded. A real Chromium audit of `example.com` completed successfully.
+* **Durable hosted persistence verified**: production uses `DATABASE_URL` -> `PostgresLeadStore` -> Neon/Postgres. On 2026-09-02, an operator confirmed the same disposable `public_leads` row before and after a normal Render restart.
+* **Fail-closed lead capture**: storage failures return 500 (`lead_capture_failed`) without returning report HTML. No public lead-read API exists.
+* **SQLite remains supported**: `LEADSCAN_LEAD_DB_PATH` selects the local or persistent-volume/single-instance fallback. Postgres takes deterministic precedence when both stores are configured.
 * **Exact HTTPS CORS origin**: FastAPI `CORSMiddleware` configured to allow strictly one exact HTTPS frontend origin (`LEADSCAN_ALLOWED_ORIGIN`), with wildcards forbidden. CORS is a browser transport permission only, not authentication.
-* **Configurable frontend worker origin**: `site/index.html` meta tag `leadscan-api-origin` defaults to same-origin `/api/audit` when blank and normalizes valid HTTPS origins. Frontend always appends fixed `/api/audit`.
-* **Exact Netlify CSP**: `netlify.toml` configures `connect-src 'self' https://leadscan-worker.example.invalid;` with manual deployment comments.
-* **Persistent Fly volume wiring**: `fly.worker.toml` configures persistent mount `leadscan_data` to `/data` with `LEADSCAN_LEAD_DB_PATH=/data/leadscan-public-leads.sqlite3`. Startup script enforces mount presence and drops root privileges to `pwuser`.
-* **Single-Machine SQLite architecture**: Current inbound lead storage uses SQLite on a per-Machine Fly volume, requiring deployment with exactly one worker Machine. Horizontal scaling requires migrating to a shared database.
+* **Production worker origin configured**: `site/index.html` resolves the fixed `/api/audit` path against the exact Render HTTPS origin, and `netlify.toml` restricts `connect-src` to that origin.
+* **Optional Browserless support**: current source supports a remote Browserless CDP backend when both `BROWSERLESS_ENDPOINT` and `BROWSERLESS_TOKEN` are configured; local Chromium remains supported.
+* **Alternative Fly/SQLite wiring remains available**: `fly.worker.toml` mounts `leadscan_data` at `/data` for a single-Machine SQLite deployment. It is not the current hosted production architecture.
 * **Multi-tier security boundaries**: 4 KiB request body limit, fast envelope rate limiter, service audit rate limiter, concurrency gate (2 concurrent audits), SSRF / private IP blocking, 105s audit HTTP wait timeout, and 384 KiB response cap.
 * **Full test automation**: Fast unit tests, real Chromium frontend integration tests with intercepted cross-origin flows, Docker worker container build, non-root Chromium launch smoke tests, and secret-pattern CI checks.
-
-### Not verified live / deployer action
-
-The hosted widget is implemented and deployment-ready in the repository; live deployment remains an operator step:
-
-* No live Fly app, Machine, IP, secret, or volume has been created by this repository work.
-* No live Netlify site or production DNS hostname has been configured.
-* Fly persistent volume runtime attachment and permissions have not been verified live on cloud infrastructure.
-* Worker egress firewall / netfilter capability has not been verified in actual Fly runtime.
-* Real cross-origin Netlify-to-worker requests and durable lead survival across redeployment have not been tested live.
 
 ---
 

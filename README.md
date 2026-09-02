@@ -152,55 +152,56 @@ is nothing to review, and "you have no website" is a worse opening than a call.
 
 ## Hosted public audit widget
 
-LeadScan also includes an independently deployable public website review widget:
+LeadScan's public website review is live at
+<https://enchanting-alpaca-de0ed3.netlify.app>. The production path is:
 
-1. A visitor opens the static LeadScan frontend (`site/index.html`).
-2. The visitor enters their website address, optional contact name, and required work email.
-3. The frontend sends a strict three-field request body (`url`, `contact_name`, `email`) to `/api/audit`.
-4. The worker audits the submitted website in an isolated headless browser pipeline (`public_audit.py`).
-5. Lead details are validated and saved to private SQLite storage (`lead_capture.py`).
-6. Only after successful lead persistence is the review report returned in the response.
-7. The visitor receives their score, tier, suggested opening line, and an interactive preview rendered inside a sandboxed iframe.
+```text
+Netlify static frontend
+    -> Render FastAPI worker
+    -> LeadScan audit engine and Chromium
+    -> durable Postgres lead capture
+    -> customer report
+```
+
+The visitor enters a website address, an optional contact name, and a required
+work email. The frontend sends exactly `url`, `contact_name`, and `email` to
+`POST /api/audit`. The customer-facing result shows the score, reviewed website,
+and full website review inside a sandboxed iframe.
 
 ### Frontend components
 
 * `site/index.html`, `site/app.js`, `site/styles.css`: Static frontend assets without build tools or external script frameworks.
 * `netlify.toml`: Netlify deployment headers, Content Security Policy, and caching directives.
-* `site/index.html` contains `<meta name="leadscan-api-origin" content="">`. When blank, the client requests same-origin `/api/audit`. When configured with an exact worker origin, it directs audit requests to that worker while always appending the fixed `/api/audit` path. Arbitrary API paths cannot be configured from the frontend.
+* `site/index.html` configures the production Render worker origin in `meta[name="leadscan-api-origin"]`. The client validates that exact HTTPS origin and always appends the fixed `/api/audit` path; arbitrary API paths cannot be configured from the frontend.
 
 ### Worker API & private lead storage
 
 * `public_api.py`: FastAPI application serving strictly `POST /api/audit` (automatic OpenAPI/docs endpoints disabled).
 * Requires the exact three-field schema (`url`, `contact_name`, `email`). Requests without contact details are rejected before auditing.
-* `lead_capture.py`: Private SQLite store recording visitor contact details, timestamp, and audited URL. SQLite uses a busy timeout and private file mode enforcement. It provides no public read endpoint.
+* `DATABASE_URL` selects the shared `PostgresLeadStore` and is the production configuration. It creates `public_leads` safely, uses parameterized inserts, commits each successful write, and returns the inserted row ID.
+* `LEADSCAN_LEAD_DB_PATH` selects the private SQLite fallback for local development or a single-instance deployment backed by a persistent volume. SQLite uses a busy timeout and private file mode enforcement.
+* Postgres takes deterministic precedence when both persistence settings are present.
+* Lead capture is fail-closed: if persistence fails, the API returns `lead_capture_failed` and does not return a successful report. There is no public lead-read endpoint.
 * Worker CORS middleware validates and allows strictly one exact HTTPS origin via `LEADSCAN_ALLOWED_ORIGIN`. Wildcard origins (`*`) and credentials are not permitted. CORS is a browser transport control only and is not treated as authentication.
+* Local Chromium is supported directly. The source also supports an optional Browserless CDP connection when both `BROWSERLESS_ENDPOINT` and `BROWSERLESS_TOKEN` are configured.
 
-### Manual production wiring
+### Verified production deployment
 
-Production deployment is deliberately manual; the repository does not commit real production hostnames. When deploying the frontend to Netlify and the worker to Fly:
+* **Public frontend:** <https://enchanting-alpaca-de0ed3.netlify.app> (Netlify, publicly accessible without Netlify authentication).
+* **Public worker:** <https://leadscan-9fsy.onrender.com> (Render).
+* **Frontend production commit:** `57deef5277a6a4bda64f7c11545f7555aef6206f`.
+* The production cross-origin flow has completed a real Chromium audit of `example.com` and returned the customer report.
+* Hosted lead persistence uses `DATABASE_URL` -> `PostgresLeadStore` -> Neon/Postgres.
+* On 2026-09-02, an operator confirmed the same disposable lead row in `public_leads` before and after a normal Render restart. Production persistence is therefore **verified durable**.
 
-1. **Frontend HTML (`site/index.html`)**: Set `meta[name="leadscan-api-origin"]` content to the exact HTTPS origin of the deployed worker.
-2. **Netlify CSP (`netlify.toml`)**: Replace `https://leadscan-worker.example.invalid` in the `connect-src` header with the SAME exact worker HTTPS origin.
-3. **Worker Environment**: Set `LEADSCAN_ALLOWED_ORIGIN` in the worker environment to the exact public HTTPS origin of the Netlify site. Do not use wildcard origins.
+No production connection string, token, or disposable test identity is stored in this repository.
 
-### Persistent lead storage configuration
+### Alternative Fly/SQLite deployment
 
 * `fly.worker.toml` configures persistent storage via volume `leadscan_data` mounted at `/data`, setting `LEADSCAN_LEAD_DB_PATH=/data/leadscan-public-leads.sqlite3`.
 * `deploy/fly/start-worker.sh` enforces that `/data` is an active mount point before starting the worker, failing closed if missing, and runs Uvicorn as unprivileged `pwuser`.
 * SQLite deployment is designed for **one worker Machine**; Fly volumes are per-Machine and not a shared/replicated multi-Machine database.
-* The repository contains deployment-ready configuration, but no live Fly volume, runtime attachment, or production deployment is verified by this repository state.
-
-### Still requires live deployment verification
-
-The following items are operational deployment verification steps that must be validated in actual hosting environments:
-
-* Provision and attach the persistent volume on Fly.
-* Verify `/data` ownership and write permissions on the running Fly worker.
-* Verify worker egress firewall / netfilter capability in the hosting container runtime.
-* Replace placeholder worker hostnames with production hostnames in `site/index.html` and `netlify.toml`.
-* Configure `LEADSCAN_ALLOWED_ORIGIN` on the worker with the production frontend hostname.
-* Verify real cross-origin requests from Netlify to the Fly worker.
-* Verify captured leads survive worker Machine restarts and redeployments.
+* This remains a technically supported alternative architecture, not the current hosted production deployment. Its volume attachment and runtime permissions must be verified by any operator choosing that deployment.
 
 ## The first message
 
@@ -324,7 +325,7 @@ reported as broken), and a parked domain.
 | `audit_report.py` | The branded one-page review you send the prospect. |
 | `public_api.py` | FastAPI transport layer and rate-limited endpoint for `/api/audit`. |
 | `public_audit.py` | Single-site audit runner, URL safety checks, and report generator. |
-| `lead_capture.py` | Private SQLite lead storage with fail-closed schema and permissions. |
+| `lead_capture.py` | Private Postgres and SQLite lead storage with fail-closed persistence. |
 | `site/` | Static public website review frontend (HTML, CSS, JS). |
 | `netlify.toml` | Netlify static headers, security headers, and CSP connect-src policy. |
 | `Dockerfile.worker` | Production container image for unprivileged worker and Chromium. |
