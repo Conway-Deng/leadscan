@@ -185,6 +185,11 @@ def test_result_section_and_required_ids():
     assert "result-score" in tags_by_id
     assert "result-url" in tags_by_id
     assert "report-preview" in tags_by_id
+    assert "report-print" in tags_by_id
+    print_tag, print_attrs = tags_by_id["report-print"]
+    assert print_tag == "button"
+    assert print_attrs.get("type") == "button"
+    assert "disabled" in print_attrs
     assert "result-tier" not in tags_by_id
     assert "result-hook" not in tags_by_id
 
@@ -222,6 +227,19 @@ def test_reset_button():
     btn_tag, btn_attrs = tags_by_id["audit-reset"]
     assert btn_tag == "button"
     assert btn_attrs.get("type") == "button"
+
+
+def test_print_report_is_guarded_and_targets_the_report_iframe():
+    js_content = APP_JS.read_text(encoding="utf-8")
+
+    assert 'document.getElementById("report-print")' in js_content
+    assert "reportPrint.disabled = true" in js_content
+    assert "reportPrint.disabled = false" in js_content
+    assert "reportPreview.contentWindow" in js_content
+    assert "reportPreview.contentDocument" in js_content
+    assert "reportWindow.print()" in js_content
+    assert "reportPreview.srcdoc" in js_content
+    assert "report could not be printed" in js_content
 
 
 def test_js_relative_api_endpoint_and_method():

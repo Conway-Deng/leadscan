@@ -11,6 +11,7 @@
   const resultScore = document.getElementById("result-score");
   const resultUrl = document.getElementById("result-url");
   const reportPreview = document.getElementById("report-preview");
+  const reportPrint = document.getElementById("report-print");
   const auditReset = document.getElementById("audit-reset");
 
   const ERROR_MESSAGES = {
@@ -76,7 +77,38 @@
     resultScore.textContent = "";
     resultUrl.textContent = "";
     reportPreview.srcdoc = "";
+    reportPrint.disabled = true;
     auditResult.hidden = true;
+  }
+
+  function updatePrintAvailability() {
+    if (
+      reportPreview.srcdoc &&
+      reportPreview.contentDocument &&
+      reportPreview.contentDocument.body
+    ) {
+      reportPrint.disabled = false;
+    } else {
+      reportPrint.disabled = true;
+    }
+  }
+
+  function printReport() {
+    if (reportPrint.disabled || !reportPreview.srcdoc) {
+      return;
+    }
+
+    try {
+      const reportWindow = reportPreview.contentWindow;
+      const reportDocument = reportPreview.contentDocument;
+      if (!reportWindow || !reportDocument || !reportDocument.body || typeof reportWindow.print !== "function") {
+        return;
+      }
+      reportWindow.focus();
+      reportWindow.print();
+    } catch (error) {
+      setStatus("The report could not be printed right now. Please try again later.");
+    }
   }
 
   function scrollToResult() {
@@ -176,6 +208,7 @@
         resultUrl.textContent = data.result.final_url || data.result.url || submittedUrl;
 
         reportPreview.srcdoc = data.result.report_html;
+        updatePrintAvailability();
         auditResult.hidden = false;
         scrollToResult();
       } else {
@@ -204,5 +237,7 @@
   }
 
   auditForm.addEventListener("submit", handleAuditSubmit);
+  reportPreview.addEventListener("load", updatePrintAvailability);
+  reportPrint.addEventListener("click", printReport);
   auditReset.addEventListener("click", handleReset);
 })();

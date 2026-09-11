@@ -376,11 +376,20 @@ def test_report_renders_with_production_headers_and_remains_isolated(
         expect(frame.locator("body")).to_contain_text("What this review did not check")
         assert frame.locator("body").get_attribute("data-script-ran") is None
         assert page.locator("body").get_attribute("data-report-script-ran") is None
+
+        print_button = page.locator("#report-print")
+        expect(print_button).to_be_enabled()
+        iframe.evaluate(
+            "element => { element.contentWindow.print = () => { element.dataset.printCalled = 'yes'; }; }"
+        )
+        print_button.click()
+        expect(iframe).to_have_attribute("data-print-called", "yes")
         assert_only_local_and_mocked_worker_requests(request_urls)
 
         page.locator("#audit-reset").click()
         expect(page.locator("#audit-result")).to_be_hidden()
         assert iframe.evaluate("element => element.srcdoc") == ""
+        expect(print_button).to_be_disabled()
     finally:
         page.close()
 
