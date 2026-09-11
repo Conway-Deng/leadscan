@@ -203,7 +203,10 @@ def test_report_iframe_sandbox_and_security_attributes():
     assert frame_tag == "iframe"
     assert "sandbox" in frame_attrs
     sandbox_val = frame_attrs.get("sandbox") or ""
-    assert sandbox_val.split() == ["allow-same-origin"]
+    sandbox_tokens = sandbox_val.split()
+    assert "allow-same-origin" in sandbox_tokens
+    assert "allow-modals" in sandbox_tokens
+    assert sandbox_tokens == ["allow-same-origin", "allow-modals"]
     for forbidden_perm in (
         "allow-scripts",
         "allow-forms",

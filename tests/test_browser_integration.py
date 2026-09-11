@@ -349,7 +349,9 @@ def test_report_renders_with_production_headers_and_remains_isolated(
 
         iframe = page.locator("#report-preview")
         sandbox_tokens = (iframe.get_attribute("sandbox") or "").split()
-        assert sandbox_tokens == ["allow-same-origin"]
+        assert "allow-same-origin" in sandbox_tokens
+        assert "allow-modals" in sandbox_tokens
+        assert sandbox_tokens == ["allow-same-origin", "allow-modals"]
         assert "allow-scripts" not in sandbox_tokens
         assert iframe.get_attribute("referrerpolicy") == "no-referrer"
         iframe_srcdoc = iframe.evaluate("element => element.srcdoc")
