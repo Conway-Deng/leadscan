@@ -8,6 +8,7 @@ SITE_DIR = Path("site")
 INDEX_HTML = SITE_DIR / "index.html"
 STYLES_CSS = SITE_DIR / "styles.css"
 APP_JS = SITE_DIR / "app.js"
+SAMPLE_REPORT_HTML = SITE_DIR / "sample-report.html"
 NETLIFY_CONFIG = Path("netlify.toml")
 PRODUCTION_WORKER_ORIGIN = "https://leadscan-9fsy.onrender.com"
 WORKER_ORIGIN_PLACEHOLDER = "https://leadscan-worker.example.invalid"
@@ -37,6 +38,7 @@ def test_site_files_exist():
     assert STYLES_CSS.is_file()
     assert APP_JS.is_file()
     assert NETLIFY_CONFIG.is_file()
+    assert SAMPLE_REPORT_HTML.is_file()
 
 
 def test_landing_page_has_customer_facing_structure_and_single_h1():
@@ -410,3 +412,50 @@ def test_css_responsive_and_accessibility():
 def test_no_build_tool_or_package_files_created():
     for forbidden in ("package.json", "package-lock.json", "vite.config.js", "vite.config.ts", "node_modules"):
         assert not Path(forbidden).exists()
+
+
+def test_index_contains_sample_report_cta_and_link():
+    tags = parse_index_tags()
+    content = INDEX_HTML.read_text(encoding="utf-8")
+
+    sample_links = [
+        attrs for tag, attrs in tags
+        if tag == "a" and attrs.get("href") == "sample-report.html"
+    ]
+    assert len(sample_links) >= 1
+    assert "View full sample report" in content
+    assert "See an illustrative example before starting your own review." in content
+
+
+def test_sample_report_content_and_illustrative_marking():
+    assert SAMPLE_REPORT_HTML.is_file()
+    content = SAMPLE_REPORT_HTML.read_text(encoding="utf-8")
+
+    assert "LeadScan — Sample Website Review" in content
+    assert "Illustrative example" in content
+    assert "Illustrative example — not a real business audit" in content
+    assert "https://example-business.test" in content
+    assert "Example Business" in content
+    assert "68" in content
+    assert "Start my own free review" in content
+    assert "Back to LeadScan" in content
+    assert 'href="index.html#review"' in content
+    assert 'href="index.html"' in content
+    assert "Contact action could be clearer" in content
+    assert "Loading performance is worth reviewing" in content
+    assert "What may be making enquiries harder" in content
+    assert "What is already working" in content
+    assert "What this review did not check" in content
+    assert "A real LeadScan review is generated from the public signals observed on the submitted website." in content
+
+
+def test_sample_report_contains_no_scripts_forms_or_worker_endpoints():
+    content = SAMPLE_REPORT_HTML.read_text(encoding="utf-8")
+    lower_content = content.lower()
+
+    assert "<script" not in lower_content
+    assert "<form" not in lower_content
+    assert "<iframe" not in lower_content
+    assert "<input" not in lower_content
+    assert "leadscan-9fsy.onrender.com" not in lower_content
+    assert "/api/audit" not in lower_content

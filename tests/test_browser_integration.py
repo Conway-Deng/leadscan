@@ -634,3 +634,45 @@ def test_public_frontend_configured_worker_origin_in_real_chromium(
                     assert req_url == "https://worker.example/api/audit", f"Unexpected external request: {req_url}"
     finally:
         page.close()
+
+
+def test_sample_report_page_in_real_chromium(
+    local_frontend_url,
+    frontend_chromium,
+):
+    page = frontend_chromium.new_page()
+    try:
+        captured_urls = []
+        page.on("request", lambda req: captured_urls.append(req.url))
+
+        page.goto(local_frontend_url)
+        sample_link = page.locator('a[href="sample-report.html"]')
+        expect(sample_link).to_be_visible()
+        expect(sample_link).to_contain_text("View full sample report")
+
+        sample_link.click()
+        expect(page).to_have_title(re.compile(r"LeadScan.*Sample Website Review"))
+        expect(page.locator("h1")).to_have_text("Sample Website Review")
+        expect(page.locator("body")).to_contain_text("Illustrative example")
+        expect(page.locator("body")).to_contain_text("https://example-business.test")
+        expect(page.locator("body")).to_contain_text("Example Business")
+        expect(page.locator("body")).to_contain_text("68")
+        expect(page.locator("body")).to_contain_text("Contact action could be clearer")
+        expect(page.locator("body")).to_contain_text("Loading performance is worth reviewing")
+
+        # CTA link back to index.html#review
+        cta_review = page.locator('a[href="index.html#review"]')
+        expect(cta_review.first).to_be_visible()
+        expect(cta_review.last).to_be_visible()
+        expect(cta_review.last).to_contain_text("Start my own free review")
+
+        # Back to LeadScan link
+        back_link = page.locator('a[href="index.html"]').first
+        expect(back_link).to_be_visible()
+
+        # Confirm no external or API requests made
+        assert_only_local_and_mocked_worker_requests(captured_urls)
+        assert not any("onrender.com" in url for url in captured_urls)
+        assert not any("/api/audit" in url for url in captured_urls)
+    finally:
+        page.close()
