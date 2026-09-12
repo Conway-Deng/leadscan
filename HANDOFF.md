@@ -338,6 +338,7 @@ lead, and you can say exactly what you saw.
 
 - [x] ~~Second-page check~~ — done in v3.1.
 - [x] ~~Email enrichment beyond the home page~~ — done, via the same fetch.
+- [x] ~~Hosted inbound audit widget & customer report preview~~ — done, live in production with Print / Save action, sandboxed iframe, and static sample report.
 - [ ] **Rank by opportunity, not only by defect.** A firm with 8 reviews and a
       Meta Pixel is worth more than a firm with 8 reviews and no pixel, and the
       score already says so. What it does not know is deal size. A per-sweep
@@ -359,7 +360,7 @@ lead, and you can say exactly what you saw.
 
 ---
 
-## Hosted audit widget — current state (2026-09-02)
+## Hosted audit widget — current state (2026-09-12)
 
 This work closes the major product gap identified in v4: allowing a prospective client to visit the agency's website, enter their URL, receive an instant branded review, and be captured as an inbound lead with their contact details stored privately before the report is returned.
 
@@ -367,7 +368,9 @@ This work closes the major product gap identified in v4: allowing a prospective 
 
 * **Hosted widget is live**: the public frontend is <https://enchanting-alpaca-de0ed3.netlify.app> and is accessible without Netlify authentication.
 * **Render worker is live**: <https://leadscan-9fsy.onrender.com> serves the independent audit API.
-* **Redesigned public frontend deployed**: the customer-facing landing page from commit `57deef5277a6a4bda64f7c11545f7555aef6206f` is live. It presents the score, reviewed website, and full report rather than the internal Tier/Suggested opening line summary.
+* **Customer-facing public frontend deployed**: the landing page from commit `007212a542eb3e3924cbff093bd78164e65b2cef` is live. It presents the score, reviewed website, full customer-facing report preview, and a Print / Save report action.
+* **Sandboxed report preview**: report iframe is isolated with `sandbox="allow-same-origin allow-modals"`. `allow-scripts` remains strictly absent to prevent script execution inside reports.
+* **Static full sample report available**: a static illustrative review (`sample-report.html`) can be opened directly from the landing page before form submission. The sample makes no API requests, performs no tracking, and creates no lead in Postgres. It is clearly marked as an illustrative example, not a real business audit.
 * **Static public frontend** (`site/`): Pure HTML/CSS/JS without build tools or external script dependencies. Collects website URL, optional contact name, and required work email with a clear privacy notice.
 * **Exact three-field API contract**: `POST /api/audit` strictly requires `url`, `contact_name`, and `email`. Legacy URL-only bypass is completely removed.
 * **Production path verified**: Netlify -> Render -> Chromium -> public website audit -> Postgres lead persistence -> customer report has succeeded. A real Chromium audit of `example.com` completed successfully.
@@ -380,6 +383,7 @@ This work closes the major product gap identified in v4: allowing a prospective 
 * **Alternative Fly/SQLite wiring remains available**: `fly.worker.toml` mounts `leadscan_data` at `/data` for a single-Machine SQLite deployment. It is not the current hosted production architecture.
 * **Multi-tier security boundaries**: 4 KiB request body limit, fast envelope rate limiter, service audit rate limiter, concurrency gate (2 concurrent audits), SSRF / private IP blocking, 105s audit HTTP wait timeout, and 384 KiB response cap.
 * **Full test automation**: Fast unit tests, real Chromium frontend integration tests with intercepted cross-origin flows, Docker worker container build, non-root Chromium launch smoke tests, and secret-pattern CI checks.
+* **Production market-readiness QA**: Real-world QA was conducted across 20 real Singapore business websites (10 Interior Design, 10 Tuition / Education; Accounting / Corporate Services prepared but not run). Results: 17 PASS, 0 confirmed MISMATCH, 3 CHECK (LS-014 availability degradation, LS-017 DNS resolution failure, LS-019 unlinked contact page discovery-scope limitation). No repeatable core scanner defect was confirmed.
 
 ---
 
@@ -389,8 +393,9 @@ This work closes the major product gap identified in v4: allowing a prospective 
 * `.leadscan-cache/`, `warm_leads.*` and `out/` are git-ignored. They hold
   scraped business phone numbers. Keep them private, and delete them when the
   campaign ends.
-* **Check the repository is still private.** It holds the ICP, the sweep terms
-  and the whole method, and the handoff note says it should be private.
+* **Repository security hygiene**: Repository visibility may be public. Keep API
+  keys, database credentials, lead data, generated outreach lists, journals,
+  and other sensitive operational data out of Git.
 * At most two pages per firm, with a one-second gap between two hits on the
   same server. Raise `LEADSCAN_POLITE_DELAY` before you run at high volume.
 * `*.journal.jsonl` is git-ignored. It holds every firm a run saw, including

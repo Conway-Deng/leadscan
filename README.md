@@ -170,7 +170,8 @@ and full website review inside a sandboxed iframe.
 
 ### Frontend components
 
-* `site/index.html`, `site/app.js`, `site/styles.css`: Static frontend assets without build tools or external script frameworks.
+* `site/index.html`, `site/app.js`, `site/styles.css`: Static frontend assets without build tools or external script frameworks. Includes full customer-facing report preview, Print / Save report action, and sandboxed report iframe (`sandbox="allow-same-origin allow-modals"`, with `allow-scripts` strictly absent).
+* `site/sample-report.html`: Static full sample report available before form submission. Performs no API call, contains no tracking or scripts, and creates no lead in Postgres. Clearly marked as an illustrative example, not a real business audit.
 * `netlify.toml`: Netlify deployment headers, Content Security Policy, and caching directives.
 * `site/index.html` configures the production Render worker origin in `meta[name="leadscan-api-origin"]`. The client validates that exact HTTPS origin and always appends the fixed `/api/audit` path; arbitrary API paths cannot be configured from the frontend.
 
@@ -189,12 +190,31 @@ and full website review inside a sandboxed iframe.
 
 * **Public frontend:** <https://enchanting-alpaca-de0ed3.netlify.app> (Netlify, publicly accessible without Netlify authentication).
 * **Public worker:** <https://leadscan-9fsy.onrender.com> (Render).
-* **Frontend production commit:** `57deef5277a6a4bda64f7c11545f7555aef6206f`.
+* **Frontend production commit:** `007212a542eb3e3924cbff093bd78164e65b2cef`.
 * The production cross-origin flow has completed a real Chromium audit of `example.com` and returned the customer report.
+* Hosted frontend includes the full customer-facing report preview, Print / Save report action, sandboxed report iframe (`allow-same-origin allow-modals`, `allow-scripts` absent), and the static illustrative sample report (`sample-report.html`) before form submission (no API call, no lead created).
 * Hosted lead persistence uses `DATABASE_URL` -> `PostgresLeadStore` -> Neon/Postgres.
 * On 2026-09-02, an operator confirmed the same disposable lead row in `public_leads` before and after a normal Render restart. Production persistence is therefore **verified durable**.
 
 No production connection string, token, or disposable test identity is stored in this repository.
+
+### Production market-readiness QA
+
+Real-world production QA was conducted against real Singapore business websites to verify scanner accuracy and product readiness:
+
+* **Scope:** 20 real Singapore business websites were tested across 2 sectors:
+  * 10 Interior Design businesses
+  * 10 Tuition / Education businesses
+  * Accounting / Corporate Services rows were prepared but NOT run.
+* **Results:**
+  * 17 PASS
+  * 0 confirmed MISMATCH
+  * 3 CHECK
+  * No repeatable core scanner defect was confirmed.
+* **Assessment of CHECK cases:**
+  * **LS-014**: The merchant homepage had a critical loading/problem state, while a contact page remained reachable. Treated as a website-specific availability/graceful-degradation case, not a confirmed scanner mismatch.
+  * **LS-017**: The merchant domain/homepage failed DNS resolution; not a LeadScan core defect.
+  * **LS-019**: The merchant had a directly reachable contact page, but it was not linked from the homepage. LeadScan follows actual detected contact/enquiry/booking links from the homepage and does not guess arbitrary unlinked paths; classified as a discovery-scope limitation rather than a confirmed core mismatch.
 
 ### Alternative Fly/SQLite deployment
 
